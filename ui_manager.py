@@ -26,9 +26,9 @@ class UIManager:
         self.filename_var = tk.StringVar()
         
         # 設定変数
-        self.cooltime_min_var = tk.DoubleVar(value=2.0)
+        self.cooltime_min_var = tk.DoubleVar(value=1.0)
         self.cooltime_max_var = tk.DoubleVar(value=5.0)
-        self.ua_switch_var = tk.IntVar(value=10)
+        self.ua_switch_var = tk.IntVar(value=100)
         
         # 実行中変数
         self.progress_var = tk.DoubleVar()

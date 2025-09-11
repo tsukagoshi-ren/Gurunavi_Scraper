@@ -1,5 +1,5 @@
 {
-  "cooltime_min": 1.0,
+  "cooltime_min": 0.5,
   "cooltime_max": 5.0,
   "ua_switch_interval": 80,
   "last_save_path": "C:\\Users\\rarab\\Downloads",

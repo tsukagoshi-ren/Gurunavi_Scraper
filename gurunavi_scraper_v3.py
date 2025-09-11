@@ -69,9 +69,9 @@ class GurunaviScraperApp:
     def load_config(self):
         """設定読み込み"""
         default_config = {
-            "cooltime_min": 2.0,
+            "cooltime_min": 1.0,
             "cooltime_max": 5.0,
-            "ua_switch_interval": 10,
+            "ua_switch_interval": 100,
             "last_save_path": str(Path.home() / "Downloads"),
             "user_agents": [
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

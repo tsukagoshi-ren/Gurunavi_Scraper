@@ -197,7 +197,7 @@ class ChromeDriverManager:
             return False
     
     def create_driver(self, headless=True, user_agent=None):
-        """WebDriver作成"""
+        """WebDriver作成（安定性向上版）"""
         if not SELENIUM_AVAILABLE:
             raise Exception("Seleniumがインストールされていません")
         
@@ -208,11 +208,32 @@ class ChromeDriverManager:
         try:
             chrome_options = Options()
             
-            # 基本オプション
+            # 安定性向上のためのオプション
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-images")
+            chrome_options.add_argument("--disable-javascript-harmony-shipping")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--disable-ipc-flooding-protection")
+            chrome_options.add_argument("--no-first-run")
+            chrome_options.add_argument("--no-default-browser-check")
+            chrome_options.add_argument("--disable-default-apps")
+            
+            # メモリ関連
+            chrome_options.add_argument("--memory-pressure-off")
+            chrome_options.add_argument("--max_old_space_size=4096")
+            
+            # タイムアウト関連
+            chrome_options.add_argument("--page-load-timeout=60000")
+            chrome_options.add_argument("--script-timeout=30000")
+            
+            # 自動化検出回避
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             
@@ -230,7 +251,7 @@ class ChromeDriverManager:
             if user_agent:
                 chrome_options.add_argument(f"--user-agent={user_agent}")
             
-            # 画像無効化（高速化）
+            # 詳細な設定
             prefs = {
                 "profile.default_content_setting_values": {
                     "images": 2,
@@ -239,20 +260,30 @@ class ChromeDriverManager:
                     "geolocation": 2,
                     "notifications": 2,
                     "media_stream": 2,
-                }
+                },
+                "profile.default_content_settings.popups": 0,
+                "profile.managed_default_content_settings.images": 2,
+                "profile.content_settings.exceptions.automatic_downloads.*.setting": 1
             }
             chrome_options.add_experimental_option("prefs", prefs)
             
-            # サービス作成
+            # サービス作成（ログ無効化とタイムアウト設定）
             service = Service(
                 executable_path=str(self.chromedriver_path),
-                log_path='NUL'  # ログ出力無効化
+                log_path='NUL',  # ログ出力無効化
+                service_args=['--verbose', '--whitelisted-ips=']
             )
             
             # ドライバー作成
             driver = webdriver.Chrome(service=service, options=chrome_options)
-            driver.implicitly_wait(10)
-            driver.set_page_load_timeout(30)
+            
+            # タイムアウト設定（重要）
+            driver.implicitly_wait(20)
+            driver.set_page_load_timeout(60)
+            driver.set_script_timeout(30)
+            
+            # 自動化検出回避のJavaScript実行
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             self.logger.info("WebDriver作成成功")
             return driver
@@ -262,13 +293,30 @@ class ChromeDriverManager:
             raise
     
     def cleanup_driver(self, driver):
-        """WebDriverクリーンアップ"""
+        """WebDriverクリーンアップ（改善版）"""
         if driver:
             try:
+                # タブを閉じる
+                try:
+                    driver.close()
+                except:
+                    pass
+                
+                # ドライバーを終了
                 driver.quit()
+                
                 self.logger.info("WebDriverクリーンアップ完了")
             except Exception as e:
                 self.logger.error(f"WebDriverクリーンアップエラー: {e}")
+                
+                # 強制終了を試行
+                try:
+                    import psutil
+                    for proc in psutil.process_iter(['pid', 'name']):
+                        if proc.info['name'] in ['chromedriver.exe', 'chrome.exe']:
+                            proc.kill()
+                except:
+                    pass
     
     def fix_chromedriver(self):
         """ChromeDriver修正（再ダウンロード）"""
