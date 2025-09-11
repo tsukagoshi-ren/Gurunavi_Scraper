@@ -549,49 +549,24 @@ class ScraperEngine:
             
             full_path = save_dir / filename
             
-            # Excel保存
+            # Excel保存（統計シートなし）
             with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
-                # メインシート
+                # メインシートのみ
                 df.to_excel(writer, sheet_name='店舗詳細', index=False)
                 
-                # 統計シート
-                stats_data = {
-                    '項目': [
-                        '総取得件数',
-                        '店舗名あり',
-                        '電話番号あり',
-                        '住所あり',
-                        '営業時間あり',
-                        '定休日あり',
-                        'クレジットカード情報あり'
-                    ],
-                    '件数': [
-                        len(df),
-                        (df['店舗名'] != '-').sum(),
-                        (df['電話番号'] != '-').sum(),
-                        (df['住所'] != '-').sum(),
-                        (df['営業時間'] != '-').sum(),
-                        (df['定休日'] != '-').sum(),
-                        (df['クレジットカード'] != '-').sum()
-                    ]
-                }
-                stats_df = pd.DataFrame(stats_data)
-                stats_df.to_excel(writer, sheet_name='統計', index=False)
-                
                 # 列幅調整
-                for sheet_name in writer.sheets:
-                    worksheet = writer.sheets[sheet_name]
-                    for column in worksheet.columns:
-                        max_length = 0
-                        column_letter = column[0].column_letter
-                        for cell in column:
-                            try:
-                                if len(str(cell.value)) > max_length:
-                                    max_length = len(str(cell.value))
-                            except:
-                                pass
-                        adjusted_width = min(max_length + 2, 100)
-                        worksheet.column_dimensions[column_letter].width = adjusted_width
+                worksheet = writer.sheets['店舗詳細']
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 100)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
             
             self.logger.info(f"詳細結果保存: {full_path}")
             

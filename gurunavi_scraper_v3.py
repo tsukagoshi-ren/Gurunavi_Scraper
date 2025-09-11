@@ -232,9 +232,6 @@ class GurunaviScraperApp:
                     'elapsed_time': elapsed_time
                 })
                 
-                # タイマー停止
-                self.ui_manager.stop_timer()
-                
                 messagebox.showinfo(
                     "完了",
                     f"スクレイピングが完了しました\n\n"
@@ -244,13 +241,9 @@ class GurunaviScraperApp:
             
         except Exception as e:
             self.logger.error(f"スクレイピングエラー: {e}")
-            # エラー時もタイマーを停止
-            self.ui_manager.stop_timer()
             messagebox.showerror("エラー", f"エラーが発生しました:\n{str(e)}")
         finally:
             self.cleanup()
-            # UIのリセット（タイマー停止を含む）
-            self.ui_manager.error_cleanup()
     
     def update_progress(self, data):
         """進捗更新コールバック"""
@@ -272,6 +265,14 @@ class GurunaviScraperApp:
         if self.scraper_engine:
             self.scraper_engine.cleanup()
             self.scraper_engine = None
+    
+    def set_scraping_state(self, is_scraping):
+        """スクレイピング状態設定"""
+        self.is_running = is_scraping
+        if not is_scraping:
+            # 終了時にUIを有効化
+            self.ui_manager.enable_all_tabs()
+            self.ui_manager.timer_running = False
     
     def on_prefecture_changed(self, prefecture):
         """都道府県変更時の処理"""

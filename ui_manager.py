@@ -48,7 +48,7 @@ class UIManager:
         # タイトル
         title_label = ttk.Label(
             main_frame,
-            text="ぐるなび店舗情報取得ツール",
+            text="ぐるなび店舗情報取得ツール v3.0",
             font=('Arial', 14, 'bold')
         )
         title_label.grid(row=0, column=0, pady=(0, 10))
@@ -467,3 +467,12 @@ class UIManager:
             'cooltime_max': self.cooltime_max_var.get(),
             'ua_switch_interval': self.ua_switch_var.get()
         }
+    
+    def stop_timer(self):
+        """タイマー停止"""
+        self.timer_running = False
+    
+    def error_cleanup(self):
+        """エラー時のクリーンアップ"""
+        self.timer_running = False
+        self.reset_progress()
