@@ -158,7 +158,7 @@ class GurunaviScraperApp:
         return True
     
     def scraping_worker(self, search_params):
-        """スクレイピングワーカースレッド（改良版）"""
+        """スクレイピングワーカースレッド（修正版）"""
         try:
             self.logger.info(f"スクレイピング開始: {search_params}")
             
@@ -213,10 +213,13 @@ class GurunaviScraperApp:
                 )
                 return
             
-            # フェーズ2: 店舗詳細取得
+            # フェーズ2: 店舗詳細取得（逐次保存方式）
             total_stores = len(store_list)
+            self.scraped_stores = []  # 結果格納用リストを初期化
+            
             for idx, store in enumerate(store_list, 1):
                 if not self.is_running:
+                    self.logger.info("ユーザーによる中断要求")
                     break
                 
                 self.update_progress({
@@ -227,23 +230,62 @@ class GurunaviScraperApp:
                     'total': total_stores
                 })
                 
-                # 店舗詳細取得
-                detail = self.scraper_engine.get_store_detail(store['url'])
-                if detail:
-                    self.scraped_stores.append(detail)
+                try:
+                    # 店舗詳細取得
+                    detail = self.scraper_engine.get_store_detail(store['url'])
+                    if detail:
+                        self.scraped_stores.append(detail)
+                        
+                        # 逐次Excelファイルに保存（上書き）
+                        self.scraper_engine.save_results_incremental(
+                            detail,
+                            search_params['save_path'],
+                            search_params['filename']
+                        )
+                        
+                        self.logger.info(f"進捗: {idx}/{total_stores} - {detail.get('店舗名', '不明')}")
+                
+                except Exception as e:
+                    self.logger.error(f"店舗詳細取得エラー ({store['url']}): {e}")
+                    
+                    # エラー時もダミーデータで継続
+                    error_detail = {
+                        'URL': store['url'],
+                        '店舗名': store['name'] + ' (取得エラー)',
+                        '電話番号': '-',
+                        '住所': '-',
+                        'ジャンル': '-',
+                        '営業時間': '-',
+                        '定休日': '-',
+                        'クレジットカード': '-',
+                        '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    self.scraped_stores.append(error_detail)
+                    
+                    # エラーデータも保存
+                    self.scraper_engine.save_results_incremental(
+                        error_detail,
+                        search_params['save_path'],
+                        search_params['filename']
+                    )
                 
                 # User-Agent切り替え
                 if idx % self.config['ua_switch_interval'] == 0:
-                    self.scraper_engine.switch_user_agent()
+                    try:
+                        self.logger.info(f"User-Agent切り替え実行 ({idx}件目)")
+                        self.scraper_engine.switch_user_agent()
+                    except Exception as e:
+                        self.logger.warning(f"User-Agent切り替えエラー: {e}")
             
-            # フェーズ3: 結果保存
-            if self.scraped_stores:
+            # フェーズ3: 最終結果保存
+            if self.scraped_stores and self.is_running:
                 self.update_progress({
                     'phase': 'saving',
-                    'message': 'Excelファイルに保存中...',
+                    'message': '最終結果を保存中...',
                     'progress': 100
                 })
                 
+                # 最終的な結果をExcelに保存
                 self.scraper_engine.save_results(
                     self.scraped_stores,
                     search_params['save_path'],
@@ -252,6 +294,8 @@ class GurunaviScraperApp:
                 
                 # 完了
                 elapsed_time = time.time() - self.start_time
+                success_count = len([s for s in self.scraped_stores if s.get('店舗名', '-') != '-'])
+                
                 self.update_progress({
                     'phase': 'complete',
                     'message': f'完了: {len(self.scraped_stores)}件取得',
@@ -259,16 +303,59 @@ class GurunaviScraperApp:
                     'elapsed_time': elapsed_time
                 })
                 
-                messagebox.showinfo(
-                    "完了",
-                    f"スクレイピングが完了しました\n\n"
-                    f"取得件数: {len(self.scraped_stores)}件\n"
-                    f"処理時間: {elapsed_time:.1f}秒"
-                )
+                if self.is_running:  # 中断されていない場合のみメッセージ表示
+                    messagebox.showinfo(
+                        "完了",
+                        f"スクレイピングが完了しました\n\n"
+                        f"取得件数: {len(self.scraped_stores)}件\n"
+                        f"成功件数: {success_count}件\n"
+                        f"処理時間: {elapsed_time:.1f}秒\n\n"
+                        f"結果は {search_params['filename']}.xlsx に保存されました"
+                    )
+            elif not self.is_running:
+                # 中断された場合
+                self.update_progress({
+                    'phase': 'stopped',
+                    'message': f'中断されました: {len(self.scraped_stores)}件取得済み',
+                    'progress': (len(self.scraped_stores) / total_stores) * 100 if total_stores > 0 else 0
+                })
+                
+                if self.scraped_stores:
+                    # 中断時でも取得済みデータを保存
+                    self.scraper_engine.save_results(
+                        self.scraped_stores,
+                        search_params['save_path'],
+                        search_params['filename'] + "_partial"
+                    )
+                    
+                    messagebox.showinfo(
+                        "中断",
+                        f"処理が中断されました\n\n"
+                        f"取得済み件数: {len(self.scraped_stores)}件\n"
+                        f"結果は {search_params['filename']}_partial.xlsx に保存されました"
+                    )
             
         except Exception as e:
             self.logger.error(f"スクレイピングエラー: {e}")
-            messagebox.showerror("エラー", f"エラーが発生しました:\n{str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
+            # エラー時でも取得済みデータがあれば保存
+            if hasattr(self, 'scraped_stores') and self.scraped_stores:
+                try:
+                    self.scraper_engine.save_results(
+                        self.scraped_stores,
+                        search_params['save_path'],
+                        search_params['filename'] + "_error"
+                    )
+                    error_msg = f"エラーが発生しました:\n{str(e)}\n\n取得済みデータは {search_params['filename']}_error.xlsx に保存されました"
+                except:
+                    error_msg = f"エラーが発生しました:\n{str(e)}"
+            else:
+                error_msg = f"エラーが発生しました:\n{str(e)}"
+            
+            messagebox.showerror("エラー", error_msg)
+        
         finally:
             self.cleanup()
 
