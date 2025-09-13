@@ -32,8 +32,8 @@ class ScraperEngine:
         self.driver = None
         self.ua_index = 0
         self.access_count = 0
-        self.processed_urls = set()  # 重複URL防止用
-        
+        self.processed_urls = set()
+    
     def initialize_driver(self):
         """ドライバー初期化"""
         try:
@@ -60,7 +60,6 @@ class ScraperEngine:
             self.ua_index = (self.ua_index + 1) % len(self.config['user_agents'])
             user_agent = self.config['user_agents'][self.ua_index]
             
-            # ドライバー再作成
             self.cleanup()
             self.driver = self.chrome_manager.create_driver(
                 headless=True,
@@ -85,135 +84,210 @@ class ScraperEngine:
         if not url or not isinstance(url, str):
             return False
         
+        # クエリパラメータを除去してベースURLをチェック
+        base_url = url.split('?')[0]
+        
         # 無効なパターンを除外
         invalid_patterns = [
-            r'/rs/',           # 検索結果ページ
-            r'/area/',         # エリアページ
-            r'/city/',         # 市区町村ページ
-            r'/plan/',         # プランページ
-            r'/campaign/',     # キャンペーンページ
-            r'/lottery/',      # 抽選ページ
-            r'/kanjirank/',    # ランキングページ
-            r'/mycoupon/',     # クーポンページ
-            r'/guide/',        # ガイドページ
-            r'/help/',         # ヘルプページ
-            r'/search',        # 検索ページ
-            r'/special/',      # 特集ページ
-            r'/feature/',      # 特集ページ
-            r'/category/',     # カテゴリページ
-            r'/genre/',        # ジャンルページ
-            r'member\.gnavi', # メンバーサイト
-            r'guide\.gnavi',  # ガイドサイト
-            r'www\.gnavi',    # メインサイト
+            r'/rs/$',
+            r'/area/$',
+            r'/city/$',
+            r'/plan/',
+            r'/campaign/',
+            r'/lottery/',
+            r'/kanjirank/',
+            r'/mycoupon/',
+            r'/guide/',
+            r'/help/',
+            r'/search',
+            r'/special/',
+            r'/feature/',
+            r'/category/',
+            r'/genre/',
+            r'member\.gnavi',
+            r'guide\.gnavi',
+            r'www\.gnavi',
         ]
         
         for pattern in invalid_patterns:
-            if re.search(pattern, url):
+            if re.search(pattern, base_url):
                 return False
         
         # 店舗URLの有効パターン
-        # 通常: https://r.gnavi.co.jp/○○○○○○○○/
-        # または: https://r.gnavi.co.jp/○○○○○○○○/menu/
         valid_patterns = [
-            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{8,}/?$',  # 8文字以上の店舗ID
-            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{8,}/menu/?$'  # メニューページ
+            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{3,}/?$',
+            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{3,}/menu/?$',
+            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{3,}/course/?$',
+            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{3,}/map/?$',
+            r'r\.gnavi\.co\.jp/[a-zA-Z0-9]{3,}/coupon/?$',
         ]
         
         for pattern in valid_patterns:
-            if re.search(pattern, url):
+            if re.search(pattern, base_url):
                 return True
         
         return False
     
-    def get_store_list(self, prefecture, city, max_count, unlimited):
-        """店舗一覧取得"""
-        try:
-            if not self.initialize_driver():
-                raise Exception("ドライバー初期化失敗")
-            
-            # URL生成
-            search_url = self.prefecture_mapper.generate_search_url(prefecture, city)
-            self.logger.info(f"検索URL: {search_url}")
-            
-            # ページアクセス
-            self.driver.get(search_url)
-            
-            # ページ読み込み待機（JavaScriptで生成される要素を待つ）
+        def get_store_list(self, prefecture, city, max_count, unlimited):
+            """店舗一覧取得（改善版）"""
             try:
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "result-cassette__box"))
-                )
-            except TimeoutException:
-                # 代替セレクタ
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "[class*='shop'], [class*='store'], [class*='restaurant']"))
-                )
-            
-            # 検索結果数取得
-            total_count = self._get_total_count()
-            self.logger.info(f"検索結果総数: {total_count}件")
-            
-            # 取得件数決定
-            if unlimited:
-                target_count = total_count
-            else:
-                target_count = min(max_count, total_count)
-            
-            self.logger.info(f"取得目標: {target_count}件")
-            
-            # 店舗リスト取得
-            store_list = []
-            page_num = 1
-            self.processed_urls.clear()  # 重複チェック用セットをクリア
-            
-            while len(store_list) < target_count:
-                # 現在ページの店舗取得
-                page_stores = self._extract_stores_from_page()
+                if not self.initialize_driver():
+                    raise Exception("ドライバー初期化失敗")
                 
-                if not page_stores:
-                    self.logger.warning(f"ページ {page_num} で店舗が見つかりません")
-                    break
+                # URL生成
+                search_url = self.prefecture_mapper.generate_search_url(prefecture, city)
+                self.logger.info(f"検索URL: {search_url}")
                 
-                # 有効で重複しない店舗のみ追加
-                valid_stores = []
-                for store in page_stores:
-                    if (store and 
-                        store.get('url') and 
-                        self.is_valid_store_url(store['url']) and
-                        store['url'] not in self.processed_urls):
+                # ページアクセス
+                self.driver.get(search_url)
+                
+                # ページ読み込み待機（より柔軟な待機処理）
+                try:
+                    # まず基本的なページ読み込みを待つ
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                    
+                    # JavaScriptの実行完了を待つ
+                    self.driver.execute_script("return document.readyState") == "complete"
+                    
+                    # 追加の待機時間（動的コンテンツの読み込み用）
+                    time.sleep(3)
+                    
+                    # ページの高さが安定するまで待つ
+                    last_height = self.driver.execute_script("return document.body.scrollHeight")
+                    time.sleep(1)
+                    new_height = self.driver.execute_script("return document.body.scrollHeight")
+                    
+                    # 高さが変わらなくなるまで待つ（最大3回）
+                    for i in range(3):
+                        if last_height == new_height:
+                            break
+                        last_height = new_height
+                        time.sleep(1)
+                        new_height = self.driver.execute_script("return document.body.scrollHeight")
+                    
+                except TimeoutException:
+                    self.logger.warning("ページ読み込みタイムアウト - 続行します")
+                
+                # 現在のページを確認（デバッグ用）
+                current_url = self.driver.current_url
+                page_title = self.driver.title
+                self.logger.info(f"ページ読み込み完了 - URL: {current_url}")
+                self.logger.info(f"ページタイトル: {page_title}")
+                
+                # エラーページかどうかチェック
+                if "404" in page_title or "エラー" in page_title or "見つかりません" in page_title:
+                    raise Exception(f"エラーページが表示されました: {page_title}")
+                
+                # 検索結果数取得（エラーを無視して続行）
+                total_count = self._get_total_count()
+                self.logger.info(f"検索結果総数: {total_count}件")
+                
+                # 取得件数決定
+                if unlimited:
+                    target_count = total_count
+                else:
+                    target_count = min(max_count, total_count)
+                
+                self.logger.info(f"取得目標: {target_count}件")
+                
+                # 店舗リスト取得
+                store_list = []
+                page_num = 1
+                self.processed_urls.clear()  # 重複チェック用セットをクリア
+                consecutive_empty_pages = 0  # 連続して空のページ数
+                
+                while len(store_list) < target_count:
+                    # 現在ページの店舗取得
+                    self.logger.info(f"ページ {page_num} の店舗を取得中...")
+                    page_stores = self._extract_stores_from_page()
+                    
+                    if not page_stores:
+                        consecutive_empty_pages += 1
+                        self.logger.warning(f"ページ {page_num} で店舗が見つかりません（連続{consecutive_empty_pages}回目）")
                         
-                        self.processed_urls.add(store['url'])
-                        valid_stores.append(store)
+                        # 3ページ連続で店舗が見つからない場合は終了
+                        if consecutive_empty_pages >= 3:
+                            self.logger.warning("3ページ連続で店舗が見つからないため終了します")
+                            break
+                        
+                        # 次ページへ移動してリトライ
+                        if not self._go_to_next_page():
+                            self.logger.info("次ページがありません")
+                            break
+                        
+                        page_num += 1
+                        self.wait_with_cooltime()
+                        continue
+                    else:
+                        consecutive_empty_pages = 0  # リセット
+                    
+                    # 有効で重複しない店舗のみ追加
+                    valid_stores = []
+                    for store in page_stores:
+                        if (store and 
+                            store.get('url') and 
+                            self.is_valid_store_url(store['url']) and
+                            store['url'] not in self.processed_urls):
+                            
+                            # URLの正規化（クエリパラメータを統一）
+                            normalized_url = store['url'].split('?')[0]
+                            if normalized_url not in self.processed_urls:
+                                self.processed_urls.add(normalized_url)
+                                self.processed_urls.add(store['url'])  # 元のURLも追加
+                                valid_stores.append(store)
+                    
+                    # 必要な分だけ追加
+                    remaining = target_count - len(store_list)
+                    store_list.extend(valid_stores[:remaining])
+                    
+                    self.logger.info(f"ページ {page_num}: {len(valid_stores)}件取得 (累計: {len(store_list)}件)")
+                    
+                    # 目標達成チェック
+                    if len(store_list) >= target_count:
+                        self.logger.info(f"目標件数に到達しました: {len(store_list)}件")
+                        break
+                    
+                    # 次ページへ
+                    if not self._go_to_next_page():
+                        self.logger.info("次ページがありません")
+                        break
+                    
+                    page_num += 1
+                    self.wait_with_cooltime()
+                    
+                    # 無限ループ防止（最大100ページ）
+                    if page_num > 100:
+                        self.logger.warning("最大ページ数(100)に到達しました")
+                        break
                 
-                # 必要な分だけ追加
-                remaining = target_count - len(store_list)
-                store_list.extend(valid_stores[:remaining])
+                # 結果の確認
+                if not store_list:
+                    self.logger.error("店舗が1件も取得できませんでした")
+                    
+                    # ページソースの一部を保存（デバッグ用）
+                    try:
+                        page_source = self.driver.page_source[:5000]  # 最初の5000文字
+                        debug_file = Path("debug_page_source.html")
+                        with open(debug_file, "w", encoding="utf-8") as f:
+                            f.write(page_source)
+                        self.logger.info(f"デバッグ用ページソースを保存: {debug_file}")
+                    except:
+                        pass
                 
-                self.logger.info(f"ページ {page_num}: {len(valid_stores)}件取得 (累計: {len(store_list)}件)")
+                self.logger.info(f"店舗一覧取得完了: {len(store_list)}件")
+                return store_list
                 
-                # 目標達成チェック
-                if len(store_list) >= target_count:
-                    break
-                
-                # 次ページへ
-                if not self._go_to_next_page():
-                    self.logger.info("次ページがありません")
-                    break
-                
-                page_num += 1
-                self.wait_with_cooltime()
+            except Exception as e:
+                self.logger.error(f"店舗一覧取得エラー: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
             
-            self.logger.info(f"店舗一覧取得完了: {len(store_list)}件")
-            return store_list
-            
-        except Exception as e:
-            self.logger.error(f"店舗一覧取得エラー: {e}")
-            raise
-    
     def _get_total_count(self):
         """検索結果総数取得"""
         try:
-            # パターン1: 検索結果数の表示を探す
             selectors = [
                 ".result-count",
                 ".search-result-count",
@@ -226,142 +300,64 @@ class ScraperEngine:
                 try:
                     element = self.driver.find_element(By.CSS_SELECTOR, selector)
                     text = element.text
-                    # 数字を抽出
                     match = re.search(r'(\d+)', text.replace(',', ''))
                     if match:
                         return int(match.group(1))
                 except:
                     continue
             
-            # パターン2: 店舗数をカウント
             stores = self._extract_stores_from_page()
             if stores:
-                # 1ページ30件として概算
-                return len(stores) * 10  # デフォルト10ページ分
+                return len(stores) * 10
             
-            return 100  # デフォルト値
+            return 100
             
         except Exception as e:
             self.logger.warning(f"検索結果総数取得エラー: {e}")
             return 100
     
     def _extract_stores_from_page(self):
-        """現在ページから店舗情報抽出"""
+        """現在ページから店舗情報抽出（改善版）"""
         stores = []
         
         try:
-            # JavaScriptで動的に読み込まれる要素を確実に取得
+            # ページ全体をスクロールして動的コンテンツを読み込む
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)  # スクロール後の読み込み待機
+            time.sleep(2)
             
-            # JavaScriptを使用して店舗要素を取得
-            store_elements = self.driver.execute_script("""
-                // 複数のセレクタパターンを試す
-                const selectors = [
-                    '.result-cassette__box',
-                    '.shop-cassette',
-                    '.restaurant-list__item',
-                    '[class*="shop-item"]',
-                    '[class*="store-item"]',
-                    '.list-rst',
-                    'article[class*="restaurant"]'
-                ];
+            # まず、JavaScriptで全てのリンクを取得して店舗URLを探す
+            store_data = self.driver.execute_script("""
+                const allLinks = document.querySelectorAll('a');
+                const storeData = [];
+                const processedUrls = new Set();
                 
-                for (let selector of selectors) {
-                    const elements = document.querySelectorAll(selector);
-                    if (elements.length > 0) {
-                        return Array.from(elements).map(el => ({
-                            'html': el.outerHTML,
-                            'selector': selector
-                        }));
-                    }
-                }
-                
-                return [];
-            """)
-            
-            if not store_elements:
-                self.logger.warning("JavaScriptで店舗要素が見つかりません")
-                # Seleniumで再試行
-                selectors = [
-                    ".result-cassette__box",
-                    ".shop-cassette",
-                    ".restaurant-list__item",
-                    "[class*='shop-item']",
-                    "[class*='store-item']",
-                    ".list-rst",
-                    "article[class*='restaurant']"
-                ]
-                
-                for selector in selectors:
-                    try:
-                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                        if elements:
-                            store_elements = []
-                            for element in elements:
-                                store_elements.append({
-                                    'element': element,
-                                    'selector': selector
-                                })
-                            self.logger.info(f"Selenium店舗要素発見: {selector} ({len(elements)}件)")
-                            break
-                    except:
-                        continue
-            else:
-                self.logger.info(f"JavaScript店舗要素発見: {len(store_elements)}件")
-            
-            if not store_elements:
-                self.logger.warning("店舗要素が見つかりません")
-                return stores
-            
-            # 各店舗から情報抽出
-            for idx, store_data in enumerate(store_elements):
-                try:
-                    if 'html' in store_data:
-                        # JavaScriptで取得したHTML要素から情報抽出
-                        store_info = self._extract_store_info_from_html(store_data['html'])
-                    else:
-                        # Selenium要素から情報抽出
-                        store_info = self._extract_store_info(store_data['element'])
-                    
-                    if store_info and self.is_valid_store_url(store_info.get('url')):
-                        stores.append(store_info)
-                except Exception as e:
-                    self.logger.warning(f"店舗情報抽出エラー (index {idx}): {e}")
-                    continue
-            
-            return stores
-            
-        except Exception as e:
-            self.logger.error(f"ページ店舗抽出エラー: {e}")
-            return stores
-    
-    def _extract_store_info_from_html(self, html_content):
-        """HTML文字列から店舗情報抽出"""
-        try:
-            # JavaScriptで詳細な情報抽出
-            store_info = self.driver.execute_script("""
-                const div = document.createElement('div');
-                div.innerHTML = arguments[0];
-                
-                // すべてのリンク要素を取得
-                const links = div.querySelectorAll('a');
-                
-                for (let link of links) {
+                for (let link of allLinks) {
                     const href = link.href || link.getAttribute('href');
-                    if (!href) continue;
+                    if (!href || processedUrls.has(href)) continue;
                     
-                    // 店舗URLパターンをチェック
+                    // フルURLを取得
+                    let fullUrl = href;
+                    if (href.startsWith('/')) {
+                        fullUrl = window.location.origin + href;
+                    }
+                    
+                    // クエリパラメータを除去してベースURLを取得
+                    const baseUrl = fullUrl.split('?')[0];
+                    
+                    // 店舗URLパターンをチェック（緩和版）
                     const validPatterns = [
-                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{8,}\\/?$/,
-                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{8,}\\/menu\\/?$/
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/menu\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/course\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/map\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/coupon\\/?$/
                     ];
                     
                     // 無効パターンをチェック
                     const invalidPatterns = [
-                        /\\/rs\\//,
-                        /\\/area\\//,
-                        /\\/city\\//,
+                        /\\/rs\\/$/,
+                        /\\/area\\/$/,
+                        /\\/city\\/$/,
                         /\\/plan\\//,
                         /\\/campaign\\//,
                         /\\/lottery\\//,
@@ -382,7 +378,7 @@ class ScraperEngine:
                     // 無効パターンチェック
                     let isInvalid = false;
                     for (let pattern of invalidPatterns) {
-                        if (pattern.test(href)) {
+                        if (pattern.test(baseUrl)) {
                             isInvalid = true;
                             break;
                         }
@@ -393,20 +389,272 @@ class ScraperEngine:
                     // 有効パターンチェック
                     let isValid = false;
                     for (let pattern of validPatterns) {
-                        if (pattern.test(href)) {
+                        if (pattern.test(baseUrl)) {
                             isValid = true;
                             break;
                         }
                     }
                     
                     if (isValid) {
-                        // 店舗名を取得
+                        processedUrls.add(href);
+                        
+                        // 店舗名を取得（複数の方法を試す）
+                        let name = '';
+                        
+                        // 1. リンクのテキストから取得
+                        const linkText = link.textContent.trim();
+                        if (linkText && linkText.length > 0 && linkText.length < 100) {
+                            name = linkText;
+                        }
+                        
+                        // 2. title属性から取得
+                        if (!name) {
+                            name = link.getAttribute('title') || '';
+                        }
+                        
+                        // 3. 画像のalt属性から取得
+                        if (!name) {
+                            const img = link.querySelector('img');
+                            if (img) {
+                                name = img.getAttribute('alt') || '';
+                            }
+                        }
+                        
+                        // 4. 親要素から店舗名を探す（より広範囲に探索）
+                        if (!name) {
+                            let parent = link.parentElement;
+                            let searchDepth = 0;
+                            while (parent && searchDepth < 5) {
+                                // 店舗名が含まれそうな要素を探す
+                                const nameElements = parent.querySelectorAll('h1, h2, h3, h4, h5, [class*="name"], [class*="title"], .shop-name, .restaurant-name');
+                                for (let el of nameElements) {
+                                    const text = el.textContent.trim();
+                                    if (text && text.length > 0 && text.length < 100) {
+                                        name = text;
+                                        break;
+                                    }
+                                }
+                                if (name) break;
+                                parent = parent.parentElement;
+                                searchDepth++;
+                            }
+                        }
+                        
+                        // 5. 同じ親要素内のテキストを探す
+                        if (!name) {
+                            const container = link.closest('article, div[class*="cassette"], div[class*="item"], div[class*="shop"], div[class*="restaurant"], li');
+                            if (container) {
+                                const texts = container.querySelectorAll('*:not(script):not(style)');
+                                for (let el of texts) {
+                                    if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
+                                        const text = el.textContent.trim();
+                                        if (text && text.length > 2 && text.length < 100 && !text.includes('\\n')) {
+                                            name = text;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // PRタグやジャンル名を除去
+                        if (name) {
+                            name = name.replace(/^PR\\s*/, '');
+                            name = name.replace(/和風軽食・喫茶|洋食|中華|イタリアン|フレンチ|居酒屋|カフェ|バー|焼肉|寿司|ラーメン/, '');
+                            name = name.trim();
+                        }
+                        
+                        // 名前が取得できなかった場合はURLから生成
+                        if (!name) {
+                            const match = baseUrl.match(/\\/([a-zA-Z0-9]+)\\/?$/);
+                            if (match) {
+                                name = '店舗ID: ' + match[1];
+                            }
+                        }
+                        
+                        if (name) {
+                            storeData.push({
+                                'name': name,
+                                'url': fullUrl
+                            });
+                        }
+                    }
+                }
+                
+                return storeData;
+            """)
+            
+            if store_data and len(store_data) > 0:
+                self.logger.info(f"JavaScript店舗データ取得: {len(store_data)}件")
+                stores = store_data
+            else:
+                self.logger.warning("JavaScriptで店舗が見つかりません。Seleniumで再試行")
+                
+                # Seleniumでのフォールバック処理（全リンクを取得）
+                all_links = self.driver.find_elements(By.TAG_NAME, "a")
+                self.logger.info(f"ページ内の全リンク数: {len(all_links)}")
+                
+                processed_urls = set()
+                for link in all_links:
+                    try:
+                        url = link.get_attribute('href')
+                        if not url or url in processed_urls:
+                            continue
+                        
+                        if self.is_valid_store_url(url):
+                            processed_urls.add(url)
+                            
+                            # 店舗名を取得
+                            name = link.text.strip()
+                            if not name:
+                                name = link.get_attribute('title') or ''
+                            
+                            # 画像のalt属性を確認
+                            if not name:
+                                try:
+                                    img = link.find_element(By.TAG_NAME, "img")
+                                    name = img.get_attribute('alt') or ''
+                                except:
+                                    pass
+                            
+                            # 親要素から店舗名を探す
+                            if not name:
+                                try:
+                                    parent = link.find_element(By.XPATH, "..")
+                                    for i in range(3):  # 3階層上まで探索
+                                        texts = parent.find_elements(By.XPATH, ".//*[contains(@class, 'name') or contains(@class, 'title')]")
+                                        for text_el in texts:
+                                            text = text_el.text.strip()
+                                            if text and len(text) < 100:
+                                                name = text
+                                                break
+                                        if name:
+                                            break
+                                        parent = parent.find_element(By.XPATH, "..")
+                                except:
+                                    pass
+                            
+                            # 名前が取得できない場合はURLから生成
+                            if not name:
+                                import re
+                                match = re.search(r'/([a-zA-Z0-9]+)/?(\?|$)', url)
+                                if match:
+                                    name = f'店舗ID: {match.group(1)}'
+                            
+                            if name:
+                                stores.append({
+                                    'name': name.replace('PR', '').strip(),
+                                    'url': url
+                                })
+                                
+                    except Exception as e:
+                        continue
+                
+                if stores:
+                    self.logger.info(f"Selenium店舗データ取得: {len(stores)}件")
+            
+            # デバッグ情報
+            if not stores:
+                self.logger.warning("店舗が見つかりません。ページ内容を確認します")
+                
+                # ページのURLを確認
+                current_url = self.driver.current_url
+                self.logger.info(f"現在のURL: {current_url}")
+                
+                # ページタイトルを確認
+                page_title = self.driver.title
+                self.logger.info(f"ページタイトル: {page_title}")
+                
+                # 全リンクのサンプルを表示（デバッグ用）
+                sample_links = self.driver.execute_script("""
+                    const links = document.querySelectorAll('a');
+                    const samples = [];
+                    for (let i = 0; i < Math.min(10, links.length); i++) {
+                        const href = links[i].href || links[i].getAttribute('href');
+                        if (href) {
+                            samples.push(href);
+                        }
+                    }
+                    return samples;
+                """)
+                self.logger.info(f"リンクサンプル: {sample_links}")
+            
+            return stores
+            
+        except Exception as e:
+            self.logger.error(f"ページ店舗抽出エラー: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return stores
+
+    def _extract_store_info_from_html(self, html_content):
+        """HTML文字列から店舗情報抽出"""
+        try:
+            store_info = self.driver.execute_script("""
+                const div = document.createElement('div');
+                div.innerHTML = arguments[0];
+                
+                const links = div.querySelectorAll('a');
+                
+                for (let link of links) {
+                    const href = link.href || link.getAttribute('href');
+                    if (!href) continue;
+                    
+                    const baseUrl = href.split('?')[0];
+                    
+                    const validPatterns = [
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/menu\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/course\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/map\\/?$/,
+                        /r\\.gnavi\\.co\\.jp\\/[a-zA-Z0-9]{3,}\\/coupon\\/?$/
+                    ];
+                    
+                    const invalidPatterns = [
+                        /\\/rs\\/$/,
+                        /\\/area\\/$/,
+                        /\\/city\\/$/,
+                        /\\/plan\\//,
+                        /\\/campaign\\//,
+                        /\\/lottery\\//,
+                        /\\/kanjirank\\//,
+                        /\\/mycoupon\\//,
+                        /\\/guide\\//,
+                        /\\/help\\//,
+                        /\\/search/,
+                        /\\/special\\//,
+                        /\\/feature\\//,
+                        /\\/category\\//,
+                        /\\/genre\\//,
+                        /member\\.gnavi/,
+                        /guide\\.gnavi/,
+                        /www\\.gnavi/
+                    ];
+                    
+                    let isInvalid = false;
+                    for (let pattern of invalidPatterns) {
+                        if (pattern.test(baseUrl)) {
+                            isInvalid = true;
+                            break;
+                        }
+                    }
+                    
+                    if (isInvalid) continue;
+                    
+                    let isValid = false;
+                    for (let pattern of validPatterns) {
+                        if (pattern.test(baseUrl)) {
+                            isValid = true;
+                            break;
+                        }
+                    }
+                    
+                    if (isValid) {
                         let name = link.textContent.trim();
                         if (!name) {
                             name = link.getAttribute('title') || '';
                         }
                         
-                        // 親要素から店舗名を探す
                         if (!name) {
                             const parent = link.closest('[class*="cassette"], [class*="item"], [class*="shop"]');
                             if (parent) {
@@ -438,29 +686,23 @@ class ScraperEngine:
     def _extract_store_info(self, element):
         """店舗要素から情報抽出"""
         try:
-            # まずぐるなび特有のtitleLinkクラスを探す
             try:
                 title_link = element.find_element(By.CSS_SELECTOR, "a[class*='titleLink'], a[class*='style_titleLink']")
                 url = title_link.get_attribute('href')
                 
                 if url and self.is_valid_store_url(url):
-                    # 店舗名を取得（h2要素から）
                     name = None
                     try:
                         name_element = title_link.find_element(By.CSS_SELECTOR, "h2[class*='restaurantName'], h2[class*='style_restaurantName']")
                         name = name_element.text.strip()
-                        # PRタグを除去
                         if name.startswith('PR'):
                             name = re.sub(r'^PR\s*', '', name).strip()
                     except:
                         pass
                     
-                    # 店舗名が取得できない場合
                     if not name:
                         name = title_link.text.strip()
-                        # ジャンル文字列を除去
                         name = re.sub(r'和風軽食・喫茶|洋食|中華|イタリアン|フレンチ|居酒屋|カフェ|バー|焼肉|寿司|ラーメン', '', name).strip()
-                        # PRタグを除去
                         name = re.sub(r'^PR\s*', '', name).strip()
                     
                     if name:
@@ -471,7 +713,6 @@ class ScraperEngine:
             except:
                 pass
             
-            # 従来の方法でリンク要素を取得
             link_elements = element.find_elements(By.TAG_NAME, "a")
             
             for link_element in link_elements:
@@ -480,12 +721,10 @@ class ScraperEngine:
                     if not url or not self.is_valid_store_url(url):
                         continue
                     
-                    # 店舗名を取得
                     name = link_element.text.strip()
                     if not name:
                         name = link_element.get_attribute('title') or ''
                     
-                    # 親要素から店舗名を探す
                     if not name:
                         try:
                             parent = link_element.find_element(By.XPATH, "./ancestor::*[contains(@class, 'cassette') or contains(@class, 'item') or contains(@class, 'shop')][1]")
@@ -522,7 +761,6 @@ class ScraperEngine:
     def _go_to_next_page(self):
         """次ページへ移動"""
         try:
-            # 次ページボタンのセレクタ
             next_selectors = [
                 "a.next",
                 ".pagination__next a",
@@ -535,12 +773,9 @@ class ScraperEngine:
                 try:
                     next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
                     if next_button.is_enabled():
-                        # スクロールして表示
                         self.driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
                         time.sleep(0.5)
                         next_button.click()
-                        
-                        # ページ遷移待機
                         time.sleep(2)
                         return True
                 except:
@@ -559,16 +794,13 @@ class ScraperEngine:
             try:
                 self.access_count += 1
                 
-                # アクセス（タイムアウト対策）
                 self.logger.info(f"店舗詳細アクセス試行 {attempt + 1}/{max_retries}: {url}")
                 self.driver.get(url)
                 self.wait_with_cooltime()
                 
-                # ページ読み込み待機
-                wait = WebDriverWait(self.driver, 20)  # 20秒に延長
+                wait = WebDriverWait(self.driver, 20)
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
                 
-                # 詳細情報取得
                 detail = {
                     'URL': url,
                     '店舗名': self._extract_detail_text(['h1', '.shop-name', '#shop-name', '[class*="name"]']),
@@ -581,7 +813,6 @@ class ScraperEngine:
                     '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
                 
-                # 空欄は「-」に置換
                 for key in detail:
                     if key not in ['URL', '取得日時']:
                         if not detail[key] or detail[key].strip() == '':
@@ -594,10 +825,8 @@ class ScraperEngine:
                 self.logger.warning(f"店舗詳細取得エラー (試行{attempt + 1}/{max_retries}): {e}")
                 
                 if attempt < max_retries - 1:
-                    # リトライ前の待機とドライバーリフレッシュ
                     time.sleep(5)
                     
-                    # 複数回失敗した場合はドライバーを再初期化
                     if attempt >= 1:
                         try:
                             self.logger.info("ドライバーリフレッシュ実行")
@@ -608,10 +837,8 @@ class ScraperEngine:
                             if not self.initialize_driver():
                                 raise Exception("ドライバー再初期化失敗")
                 else:
-                    # 最終的に失敗した場合もデータ構造を返す
                     self.logger.error(f"店舗詳細取得最終失敗 ({url}): {e}")
         
-        # エラー時も基本構造を返す
         return {
             'URL': url,
             '店舗名': '-',
@@ -639,7 +866,6 @@ class ScraperEngine:
     def _extract_phone_number(self):
         """電話番号抽出"""
         try:
-            # 電話番号リンク
             tel_link = self.driver.find_element(By.CSS_SELECTOR, "a[href^='tel:']")
             href = tel_link.get_attribute('href')
             if href:
@@ -647,10 +873,8 @@ class ScraperEngine:
         except:
             pass
         
-        # テキストから抽出
         text = self._extract_detail_text(['.tel', '.phone', '[class*="tel"]', '[class*="phone"]'])
         if text:
-            # 電話番号パターン
             match = re.search(r'(\d{2,4}[-\s]?\d{2,4}[-\s]?\d{3,4})', text)
             if match:
                 return match.group(1)
@@ -662,7 +886,6 @@ class ScraperEngine:
         try:
             df = pd.DataFrame(store_list)
             
-            # ファイルパス作成
             save_dir = Path(save_path)
             save_dir.mkdir(parents=True, exist_ok=True)
             
@@ -671,11 +894,9 @@ class ScraperEngine:
             
             full_path = save_dir / filename
             
-            # Excel保存
             with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name='店舗一覧', index=False)
                 
-                # 列幅調整
                 worksheet = writer.sheets['店舗一覧']
                 for column in worksheet.columns:
                     max_length = 0
@@ -699,7 +920,6 @@ class ScraperEngine:
         try:
             df = pd.DataFrame(results)
             
-            # ファイルパス作成
             save_dir = Path(save_path)
             save_dir.mkdir(parents=True, exist_ok=True)
             
@@ -708,12 +928,9 @@ class ScraperEngine:
             
             full_path = save_dir / filename
             
-            # Excel保存（統計シートなし）
             with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
-                # メインシートのみ
                 df.to_excel(writer, sheet_name='店舗詳細', index=False)
                 
-                # 列幅調整
                 worksheet = writer.sheets['店舗詳細']
                 for column in worksheet.columns:
                     max_length = 0
