@@ -15,8 +15,10 @@ import json
 # カスタムモジュール
 from prefecture_mapper import PrefectureMapper
 from chrome_driver_manager import ChromeDriverManager
-from scraper_engine import ScraperEngine
+# from scraper_engine import ScraperEngine
 from ui_manager import UIManager
+# 改良版スクレイパーエンジン使用
+from scraper_engine import ImprovedScraperEngine
 
 class GurunaviScraperApp:
     """メインアプリケーションクラス"""
@@ -121,7 +123,7 @@ class GurunaviScraperApp:
         self.scraped_stores = []
         
         # スクレイパーエンジン初期化
-        self.scraper_engine = ScraperEngine(
+        self.scraper_engine = ImprovedScraperEngine(
             chrome_manager=self.chrome_manager,
             prefecture_mapper=self.prefecture_mapper,
             config=self.config,
@@ -156,11 +158,18 @@ class GurunaviScraperApp:
         return True
     
     def scraping_worker(self, search_params):
-        """スクレイピングワーカースレッド"""
+        """スクレイピングワーカースレッド（改良版）"""
         try:
             self.logger.info(f"スクレイピング開始: {search_params}")
             
-            # フェーズ1: 店舗一覧取得
+            self.scraper_engine = ImprovedScraperEngine(
+                chrome_manager=self.chrome_manager,
+                prefecture_mapper=self.prefecture_mapper,
+                config=self.config,
+                callback=self.update_progress
+            )
+            
+            # フェーズ1: 店舗一覧取得（URLのみ）
             self.update_progress({
                 'phase': 'listing',
                 'message': '店舗一覧を取得中...',
@@ -186,6 +195,24 @@ class GurunaviScraperApp:
                 search_params['filename'] + "_list"
             )
             
+            # URL取得のみで終了するオプション
+            url_only_mode = search_params.get('url_only', False)
+            if url_only_mode:
+                self.update_progress({
+                    'phase': 'complete',
+                    'message': f'URL取得完了: {len(store_list)}件',
+                    'progress': 100,
+                    'elapsed_time': time.time() - self.start_time
+                })
+                
+                messagebox.showinfo(
+                    "完了",
+                    f"店舗URL取得が完了しました\n\n"
+                    f"取得件数: {len(store_list)}件\n"
+                    f"処理時間: {time.time() - self.start_time:.1f}秒"
+                )
+                return
+            
             # フェーズ2: 店舗詳細取得
             total_stores = len(store_list)
             for idx, store in enumerate(store_list, 1):
@@ -195,7 +222,7 @@ class GurunaviScraperApp:
                 self.update_progress({
                     'phase': 'detail',
                     'message': f'店舗詳細を取得中 ({idx}/{total_stores}): {store["name"]}',
-                    'progress': (idx / total_stores) * 100,
+                    'progress': 50 + (idx / total_stores) * 50,  # 50-100%の範囲
                     'current': idx,
                     'total': total_stores
                 })
@@ -244,7 +271,7 @@ class GurunaviScraperApp:
             messagebox.showerror("エラー", f"エラーが発生しました:\n{str(e)}")
         finally:
             self.cleanup()
-    
+
     def update_progress(self, data):
         """進捗更新コールバック"""
         self.window.after(0, self.ui_manager.update_progress, data)

@@ -86,6 +86,30 @@ class UIManager:
         # 検索条件セクション
         search_frame = ttk.LabelFrame(content_frame, text="検索条件", padding="15")
         search_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+
+        # 検索オプションセクション（新規追加）
+        option_frame = ttk.LabelFrame(content_frame, text="取得オプション", padding="15")
+        option_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        
+        # URL取得のみチェックボックス
+        self.url_only_var = tk.BooleanVar(value=False)
+        self.url_only_check = ttk.Checkbutton(
+            option_frame,
+            text="店舗URLのみ取得（詳細情報は取得しない）",
+            variable=self.url_only_var
+        )
+        self.url_only_check.grid(row=0, column=0, sticky=tk.W, pady=5)
+        
+        ttk.Label(
+            option_frame,
+            text="※URLのみ取得する場合、処理時間が大幅に短縮されます",
+            font=('Arial', 9),
+            foreground='gray'
+        ).grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
+        
+        # 実行ボタンのrow番号を変更
+        button_frame = ttk.Frame(content_frame)
+        button_frame.grid(row=4, column=0, pady=20)  # row=3からrow=4に変更
         
         # 都道府県
         ttk.Label(search_frame, text="都道府県:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
@@ -451,14 +475,16 @@ class UIManager:
     
     def get_search_params(self):
         """検索パラメータ取得"""
-        return {
+        params = {
             'prefecture': self.prefecture_var.get(),
             'city': self.city_var.get(),
             'max_count': self.max_count_var.get(),
             'unlimited': self.unlimited_var.get(),
             'save_path': self.save_path_var.get(),
-            'filename': self.filename_var.get()
+            'filename': self.filename_var.get(),
+            'url_only': getattr(self, 'url_only_var', tk.BooleanVar()).get()
         }
+        return params
     
     def get_settings(self):
         """設定取得"""
