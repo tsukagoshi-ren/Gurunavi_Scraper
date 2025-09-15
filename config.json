@@ -1,11 +1,33 @@
 {
-  "cooltime_min": 0.5,
-  "cooltime_max": 5.0,
-  "ua_switch_interval": 80,
+  "cooltime_min": 2.0,
+  "cooltime_max": 4.0,
+  "ua_switch_interval": 15,
+  "retry_delay": 5.0,
+  "captcha_delay": 30.0,
+  "ip_limit_delay": 60.0,
   "last_save_path": "C:\\Users\\rarab\\Downloads",
   "user_agents": [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-  ]
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0"
+  ],
+  "time_zone_aware": {
+    "peak_hours": {
+      "start": 12,
+      "end": 13,
+      "multiplier": 1.5
+    },
+    "evening_hours": {
+      "start": 18,
+      "end": 20,
+      "multiplier": 1.3
+    },
+    "safe_hours": {
+      "start": 23,
+      "end": 6,
+      "multiplier": 0.8
+    }
+  }
 }
