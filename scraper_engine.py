@@ -12,6 +12,9 @@ from pathlib import Path
 import pandas as pd
 from urllib.parse import urlparse
 
+from gurunavi_label_based_extractor import GurunaviLabelBasedExtractor
+from gurunavi_multi_approach_extractor import GurunaviMultiApproachExtractor
+
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
@@ -593,73 +596,87 @@ class ImprovedScraperEngine:
         except Exception as e:
             self.logger.warning(f"次ページ移動エラー: {e}")
             return False
-    
+            
     def get_store_detail(self, url):
-        """段階的動的生成対応店舗詳細取得"""
-        max_retries = 2
+        try:
+            self.driver.get(url)
+            
+            # 複数アプローチ抽出器を使用
+            extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
+            detail = extractor.extract_store_data(url)
+            
+            return detail
+            
+        except Exception as e:
+            self.logger.error(f"店舗詳細取得エラー: {e}")
+            return self._get_default_detail(url)
         
-        for attempt in range(max_retries):
-            try:
-                self.access_count += 1
-                self.stats['processed_stores'] += 1
-                self._update_estimated_completion()
-                
-                self.logger.info(f"店舗詳細取得開始 ({attempt + 1}/{max_retries}): {url}")
-                
-                # ページアクセス
-                start_time = time.time()
-                self.driver.get(url)
-                
-                # 段階的コンテンツ読み込み完了待機
-                stepwise_loaded = self._wait_for_stepwise_content_load()
-                
-                if not stepwise_loaded:
-                    self.logger.warning("段階的読み込み確認できませんが処理続行")
-                
-                # CAPTCHA・IP制限チェック
-                if self._detect_captcha():
-                    self.stats['captcha_encounters'] += 1
-                    self.logger.warning("CAPTCHA検知 - 待機中")
-                    time.sleep(self.config.get('captcha_delay', 30))
-                    continue
-                    
-                if self._detect_ip_restriction():
-                    self.stats['ip_restrictions'] += 1
-                    self.logger.warning("IP制限検知 - 長時間待機")
-                    time.sleep(self.config.get('ip_limit_delay', 60))
-                    continue
-                
-                # 店舗詳細データ抽出
-                detail = self._extract_gurunavi_store_data(url)
-                
-                processing_time = time.time() - start_time
-                self.logger.info(f"店舗詳細取得完了: {detail.get('店舗名', 'Unknown')} ({processing_time:.1f}秒)")
-                
-                self.stats['successful_stores'] += 1
-                self.wait_with_cooltime()
-                
-                return detail
-                
-            except Exception as e:
-                self.logger.warning(f"店舗詳細取得エラー (試行{attempt + 1}/{max_retries}): {e}")
-                
-                if attempt < max_retries - 1:
-                    retry_delay = self.config.get('retry_delay', 5) * self.time_multiplier
-                    time.sleep(retry_delay)
-                    
-                    if attempt == max_retries - 2:
-                        try:
-                            self.switch_user_agent()
-                        except:
-                            self.cleanup()
-                            if not self.initialize_driver():
-                                break
-                else:
-                    self.stats['failed_stores'] += 1
+    # def get_store_detail(self, url):
+    #     """段階的動的生成対応店舗詳細取得"""
+    #     max_retries = 2
         
-        # 失敗時のデフォルトデータ
-        self.logger.error(f"店舗詳細取得最終失敗: {url}")
-        return self._get_default_detail(url)
+    #     for attempt in range(max_retries):
+    #         try:
+    #             self.access_count += 1
+    #             self.stats['processed_stores'] += 1
+    #             self._update_estimated_completion()
+                
+    #             self.logger.info(f"店舗詳細取得開始 ({attempt + 1}/{max_retries}): {url}")
+                
+    #             # ページアクセス
+    #             start_time = time.time()
+    #             self.driver.get(url)
+                
+    #             # 段階的コンテンツ読み込み完了待機
+    #             stepwise_loaded = self._wait_for_stepwise_content_load()
+                
+    #             if not stepwise_loaded:
+    #                 self.logger.warning("段階的読み込み確認できませんが処理続行")
+                
+    #             # CAPTCHA・IP制限チェック
+    #             if self._detect_captcha():
+    #                 self.stats['captcha_encounters'] += 1
+    #                 self.logger.warning("CAPTCHA検知 - 待機中")
+    #                 time.sleep(self.config.get('captcha_delay', 30))
+    #                 continue
+                    
+    #             if self._detect_ip_restriction():
+    #                 self.stats['ip_restrictions'] += 1
+    #                 self.logger.warning("IP制限検知 - 長時間待機")
+    #                 time.sleep(self.config.get('ip_limit_delay', 60))
+    #                 continue
+                
+    #             # 店舗詳細データ抽出
+    #             detail = self._extract_gurunavi_store_data(url)
+                
+    #             processing_time = time.time() - start_time
+    #             self.logger.info(f"店舗詳細取得完了: {detail.get('店舗名', 'Unknown')} ({processing_time:.1f}秒)")
+                
+    #             self.stats['successful_stores'] += 1
+    #             self.wait_with_cooltime()
+                
+    #             return detail
+                
+    #         except Exception as e:
+    #             self.logger.warning(f"店舗詳細取得エラー (試行{attempt + 1}/{max_retries}): {e}")
+                
+    #             if attempt < max_retries - 1:
+    #                 retry_delay = self.config.get('retry_delay', 5) * self.time_multiplier
+    #                 time.sleep(retry_delay)
+                    
+    #                 if attempt == max_retries - 2:
+    #                     try:
+    #                         self.switch_user_agent()
+    #                     except:
+    #                         self.cleanup()
+    #                         if not self.initialize_driver():
+    #                             break
+    #             else:
+    #                 self.stats['failed_stores'] += 1
+        
+    #     # 失敗時のデフォルトデータ
+    #     self.logger.error(f"店舗詳細取得最終失敗: {url}")
+    #     return self._get_default_detail(url)
     
     def _detect_captcha(self):
         """CAPTCHA検知"""
@@ -700,37 +717,45 @@ class ImprovedScraperEngine:
             
         except Exception:
             return False
-    
+
     def _extract_gurunavi_store_data(self, url):
-        """ぐるなび店舗データ抽出（段階的生成対応）"""
         try:
-            # 基本情報の初期化
-            detail = {
-                'URL': url,
-                '店舗名': '-',
-                '電話番号': '-',
-                '住所': '-',
-                'ジャンル': '-',
-                '営業時間': '-',
-                '定休日': '-',
-                'クレジットカード': '-',
-                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            # 段階的にデータ抽出（各項目で軽い再確認）
-            detail['店舗名'] = self._extract_gurunavi_shop_name()
-            detail['電話番号'] = self._extract_gurunavi_phone_number()
-            detail['住所'] = self._extract_gurunavi_address()
-            detail['ジャンル'] = self._extract_gurunavi_genre()
-            detail['営業時間'] = self._extract_gurunavi_business_hours()
-            detail['定休日'] = self._extract_gurunavi_holiday()
-            detail['クレジットカード'] = self._extract_gurunavi_credit_card()
-            
-            return detail
-            
+            extractor = GurunaviLabelBasedExtractor(self.driver, self.logger)
+            return extractor.extract_store_data(url)
         except Exception as e:
-            self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
+            self.logger.error(f"データ抽出エラー: {e}")
             return self._get_default_detail(url)
+        
+    # def _extract_gurunavi_store_data(self, url):
+    #     """ぐるなび店舗データ抽出（段階的生成対応）"""
+    #     try:
+    #         # 基本情報の初期化
+    #         detail = {
+    #             'URL': url,
+    #             '店舗名': '-',
+    #             '電話番号': '-',
+    #             '住所': '-',
+    #             'ジャンル': '-',
+    #             '営業時間': '-',
+    #             '定休日': '-',
+    #             'クレジットカード': '-',
+    #             '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #         }
+            
+    #         # 段階的にデータ抽出（各項目で軽い再確認）
+    #         detail['店舗名'] = self._extract_gurunavi_shop_name()
+    #         detail['電話番号'] = self._extract_gurunavi_phone_number()
+    #         detail['住所'] = self._extract_gurunavi_address()
+    #         detail['ジャンル'] = self._extract_gurunavi_genre()
+    #         detail['営業時間'] = self._extract_gurunavi_business_hours()
+    #         detail['定休日'] = self._extract_gurunavi_holiday()
+    #         detail['クレジットカード'] = self._extract_gurunavi_credit_card()
+            
+    #         return detail
+            
+    #     except Exception as e:
+    #         self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
+    #         return self._get_default_detail(url)
 
     def _extract_gurunavi_shop_name(self):
         """ぐるなび店舗名抽出（段階的生成対応）"""
