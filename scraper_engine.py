@@ -1,6 +1,6 @@
 """
 現実的処理時間対応スクレイピングエンジン
-サーバー負荷とアクセス制限を考慮した安全運用版
+段階的動的生成対応版（スクロール誘発 + ネットワーク完了検知）
 """
 
 import time
@@ -13,16 +13,17 @@ import pandas as pd
 from urllib.parse import urlparse
 
 try:
+    from selenium import webdriver
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
-    from selenium.common.exceptions import TimeoutException, WebDriverException
+    from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
 
 class ImprovedScraperEngine:
-    """現実的処理時間対応スクレイピングエンジンクラス"""
+    """段階的動的生成対応スクレイピングエンジンクラス"""
     
     def __init__(self, chrome_manager, prefecture_mapper, config, callback=None):
         self.logger = logging.getLogger(__name__)
@@ -94,12 +95,12 @@ class ImprovedScraperEngine:
                 user_agent=user_agent
             )
             
-            # より短いタイムアウト設定（現実的な値）
-            self.driver.implicitly_wait(5)  # 20→5秒
-            self.driver.set_page_load_timeout(20)  # 60→20秒
-            self.driver.set_script_timeout(15)  # 30→15秒
+            # 段階的読み込み対応のタイムアウト設定
+            self.driver.implicitly_wait(8)
+            self.driver.set_page_load_timeout(25)
+            self.driver.set_script_timeout(20)
             
-            self.logger.info(f"ドライバー初期化完了 (UA: {self.ua_index})")
+            self.logger.info(f"ドライバー初期化完了 (UA: {self.ua_index}) - 段階的読み込み対応")
             return True
         except Exception as e:
             self.logger.error(f"ドライバー初期化エラー: {e}")
@@ -147,32 +148,172 @@ class ImprovedScraperEngine:
         self.logger.debug(f"クールタイム待機: {cooltime:.1f}秒 (倍率: {self.time_multiplier})")
         time.sleep(cooltime)
     
-    def wait_for_page_load(self):
-        """現実的なページ読み込み待機"""
+    def _trigger_stepwise_loading(self):
+        """段階的スクロールによるLazy Loading誘発"""
         try:
-            # 基本要素の読み込み待機（短縮）
-            WebDriverWait(self.driver, 8).until(
+            self.logger.debug("段階的読み込み誘発開始")
+            
+            # Phase 1: 基本DOM読み込み確認
+            WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            
-            # 最小限の待機
-            time.sleep(1.5)
-            
-            # JavaScript完了チェック（タイムアウト短縮）
-            try:
-                WebDriverWait(self.driver, 3).until(
-                    lambda driver: driver.execute_script("return document.readyState") == "complete"
-                )
-            except TimeoutException:
-                pass  # タイムアウトしても続行
-            
-            # 確実な読み込みのため追加待機
             time.sleep(1)
             
-        except TimeoutException:
-            self.logger.warning("ページ読み込みタイムアウト - 続行")
+            # Phase 2: 段階的スクロールでコンテンツ読み込み誘発
+            scroll_positions = [0, 200, 500, 800, 1100, 1400, 800, 400, 0]
+            
+            for i, position in enumerate(scroll_positions):
+                self.logger.debug(f"スクロール {i+1}/{len(scroll_positions)}: {position}px")
+                self.driver.execute_script(f"window.scrollTo(0, {position});")
+                time.sleep(0.8)  # 短時間で効率的に
+                
+                # 途中で要素チェック（効率化）
+                if i == 4:  # 中間地点で確認
+                    try:
+                        elements_found = len(self.driver.find_elements(By.CSS_SELECTOR, "#info-table, .basic-table"))
+                        if elements_found > 0:
+                            self.logger.debug("中間チェック: 主要要素検出済み")
+                            break
+                    except:
+                        pass
+            
+            # Phase 3: 店舗情報エリアにフォーカス
+            try:
+                info_elements = self.driver.find_elements(By.CSS_SELECTOR, "#info-table, .basic-table, #info-name")
+                if info_elements:
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", info_elements[0])
+                    time.sleep(1.5)
+                    self.logger.debug("店舗情報エリアにフォーカス完了")
+            except Exception as e:
+                self.logger.debug(f"店舗情報エリアフォーカス失敗: {e}")
+            
+            self.logger.debug("段階的読み込み誘発完了")
+            return True
+            
         except Exception as e:
-            self.logger.error(f"ページ読み込みエラー: {e}")
+            self.logger.warning(f"段階的読み込み誘発エラー: {e}")
+            return False
+    
+    def _wait_for_network_completion(self):
+        """AJAX/Fetch完了の効率的検知"""
+        try:
+            self.logger.debug("ネットワーク完了待機開始")
+            
+            # ネットワークアクティビティ監視スクリプト（軽量版）
+            network_script = """
+            const controller = new AbortController();
+            const signal = controller.signal;
+            
+            let pendingRequests = 0;
+            const startTime = Date.now();
+            const maxWaitTime = 8000; // 8秒でタイムアウト
+            
+            // Fetch監視（軽量）
+            const originalFetch = window.fetch;
+            window.fetch = function(...args) {
+                pendingRequests++;
+                return originalFetch.apply(this, args).finally(() => {
+                    pendingRequests--;
+                });
+            };
+            
+            // XMLHttpRequest監視（軽量）
+            const OriginalXHR = window.XMLHttpRequest;
+            const originalSend = OriginalXHR.prototype.send;
+            OriginalXHR.prototype.send = function(...args) {
+                pendingRequests++;
+                this.addEventListener('loadend', () => pendingRequests--);
+                return originalSend.apply(this, args);
+            };
+            
+            // 非同期チェック
+            return new Promise((resolve) => {
+                const checkNetwork = () => {
+                    const elapsed = Date.now() - startTime;
+                    
+                    if (elapsed > maxWaitTime) {
+                        resolve({completed: false, reason: 'timeout', elapsed: elapsed});
+                        return;
+                    }
+                    
+                    if (pendingRequests === 0) {
+                        // 0.5秒間アイドル状態が続いたら完了とみなす
+                        setTimeout(() => {
+                            if (pendingRequests === 0) {
+                                resolve({completed: true, reason: 'idle', elapsed: elapsed});
+                            } else {
+                                setTimeout(checkNetwork, 200);
+                            }
+                        }, 500);
+                    } else {
+                        setTimeout(checkNetwork, 200);
+                    }
+                };
+                
+                // 初回チェック
+                setTimeout(checkNetwork, 100);
+            });
+            """
+            
+            try:
+                result = self.driver.execute_async_script(network_script)
+                
+                if result.get('completed', False):
+                    self.logger.debug(f"ネットワーク完了検知: {result.get('reason')} ({result.get('elapsed', 0)}ms)")
+                    return True
+                else:
+                    self.logger.debug(f"ネットワーク監視タイムアウト: {result.get('reason')} ({result.get('elapsed', 0)}ms)")
+                    return False
+                    
+            except Exception as e:
+                self.logger.debug(f"ネットワーク監視スクリプトエラー: {e}")
+                # フォールバック: 基本待機
+                time.sleep(3)
+                return False
+                
+        except Exception as e:
+            self.logger.warning(f"ネットワーク完了待機エラー: {e}")
+            return False
+    
+    def _wait_for_stepwise_content_load(self):
+        """段階的コンテンツ読み込み完了待機"""
+        try:
+            self.logger.debug("段階的コンテンツ読み込み待機開始")
+            
+            # Step 1: 段階的スクロール誘発
+            scroll_success = self._trigger_stepwise_loading()
+            
+            # Step 2: ネットワーク完了待機
+            network_success = self._wait_for_network_completion()
+            
+            # Step 3: 最終安定化待機
+            time.sleep(1.5)
+            
+            # Step 4: 結果検証
+            verification_selectors = [
+                "#info-table",
+                "#info-name", 
+                ".basic-table",
+                ".number"
+            ]
+            
+            found_elements = []
+            for selector in verification_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        found_elements.append(selector)
+                except:
+                    pass
+            
+            success = len(found_elements) > 0
+            self.logger.info(f"段階的読み込み完了 - 検出要素: {found_elements} (スクロール: {scroll_success}, ネットワーク: {network_success})")
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"段階的コンテンツ読み込み待機エラー: {e}")
+            return False
     
     def is_valid_store_url(self, url):
         """店舗URLの有効性チェック"""
@@ -257,7 +398,7 @@ class ImprovedScraperEngine:
             return None
     
     def get_store_list(self, prefecture, city, max_count, unlimited):
-        """店舗一覧取得（改良版 - URL取得のみ）"""
+        """店舗一覧取得（段階的読み込み対応）"""
         try:
             if not self.initialize_driver():
                 raise Exception("ドライバー初期化失敗")
@@ -268,7 +409,10 @@ class ImprovedScraperEngine:
             
             # ページアクセス
             self.driver.get(search_url)
-            self.wait_for_page_load()
+            
+            # 段階的コンテンツ読み込み完了待機
+            if not self._wait_for_stepwise_content_load():
+                self.logger.warning("段階的読み込み完了を確認できませんでしたが処理を続行します")
             
             # 現在のページを確認
             current_url = self.driver.current_url
@@ -374,6 +518,9 @@ class ImprovedScraperEngine:
     def _extract_store_urls_from_page(self):
         """現在ページから店舗URL抽出"""
         try:
+            # ページが完全に読み込まれているかを再確認
+            time.sleep(1)
+            
             # JavaScriptでページ内の全リンクを取得
             all_links = self.driver.execute_script("""
                 const links = Array.from(document.querySelectorAll('a[href]'));
@@ -404,7 +551,7 @@ class ImprovedScraperEngine:
             return []
     
     def _go_to_next_page(self):
-        """次ページへ移動"""
+        """次ページへ移動（段階的読み込み対応）"""
         try:
             # 次ページボタンの候補セレクタ
             next_selectors = [
@@ -432,8 +579,10 @@ class ImprovedScraperEngine:
                             self.driver.execute_script("arguments[0].click();", next_element)
                             
                             # ページ遷移を待つ
-                            time.sleep(3)
-                            self.wait_for_page_load()
+                            time.sleep(2)
+                            
+                            # 段階的読み込み完了を待つ
+                            self._wait_for_stepwise_content_load()
                             
                             return True
                 except Exception:
@@ -446,14 +595,12 @@ class ImprovedScraperEngine:
             return False
     
     def get_store_detail(self, url):
-        """現実的な店舗詳細取得"""
-        max_retries = 2  # リトライ回数削減
+        """段階的動的生成対応店舗詳細取得"""
+        max_retries = 2
         
         for attempt in range(max_retries):
             try:
                 self.access_count += 1
-                
-                # 進捗情報の更新
                 self.stats['processed_stores'] += 1
                 self._update_estimated_completion()
                 
@@ -462,33 +609,33 @@ class ImprovedScraperEngine:
                 # ページアクセス
                 start_time = time.time()
                 self.driver.get(url)
-                self.wait_for_page_load()
                 
-                # CAPTCHA検知
+                # 段階的コンテンツ読み込み完了待機
+                stepwise_loaded = self._wait_for_stepwise_content_load()
+                
+                if not stepwise_loaded:
+                    self.logger.warning("段階的読み込み確認できませんが処理続行")
+                
+                # CAPTCHA・IP制限チェック
                 if self._detect_captcha():
                     self.stats['captcha_encounters'] += 1
                     self.logger.warning("CAPTCHA検知 - 待機中")
                     time.sleep(self.config.get('captcha_delay', 30))
                     continue
-                
-                # IP制限検知
+                    
                 if self._detect_ip_restriction():
                     self.stats['ip_restrictions'] += 1
                     self.logger.warning("IP制限検知 - 長時間待機")
                     time.sleep(self.config.get('ip_limit_delay', 60))
                     continue
                 
-                # データ抽出
-                detail = self._extract_store_data_fast(url)
+                # 店舗詳細データ抽出
+                detail = self._extract_gurunavi_store_data(url)
                 
-                # 処理時間ログ
                 processing_time = time.time() - start_time
                 self.logger.info(f"店舗詳細取得完了: {detail.get('店舗名', 'Unknown')} ({processing_time:.1f}秒)")
                 
-                # 成功統計更新
                 self.stats['successful_stores'] += 1
-                
-                # 必須クールタイム
                 self.wait_with_cooltime()
                 
                 return detail
@@ -497,16 +644,13 @@ class ImprovedScraperEngine:
                 self.logger.warning(f"店舗詳細取得エラー (試行{attempt + 1}/{max_retries}): {e}")
                 
                 if attempt < max_retries - 1:
-                    # リトライ前の待機（短縮）
                     retry_delay = self.config.get('retry_delay', 5) * self.time_multiplier
                     time.sleep(retry_delay)
                     
-                    # 最後の試行でドライバーリフレッシュ
                     if attempt == max_retries - 2:
                         try:
                             self.switch_user_agent()
                         except:
-                            # ドライバー切り替えに失敗した場合は基本的なクリーンアップのみ
                             self.cleanup()
                             if not self.initialize_driver():
                                 break
@@ -557,85 +701,432 @@ class ImprovedScraperEngine:
         except Exception:
             return False
     
-    def _extract_store_data_fast(self, url):
-        """高速データ抽出（BeautifulSoup併用）"""
+    def _extract_gurunavi_store_data(self, url):
+        """ぐるなび店舗データ抽出（段階的生成対応）"""
         try:
-            # BeautifulSoupで高速解析
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-            
-            # 基本情報抽出
+            # 基本情報の初期化
             detail = {
                 'URL': url,
-                '店舗名': self._extract_bs4_text(soup, [
-                    'h1', '.shop-name', '.restaurant-name', '[class*="name"]'
-                ]),
-                '電話番号': self._extract_bs4_phone(soup),
-                '住所': self._extract_bs4_text(soup, [
-                    '.address', '.shop-address', '[class*="address"]'
-                ]),
-                'ジャンル': self._extract_bs4_text(soup, [
-                    '.genre', '.category', '[class*="genre"]'
-                ]),
-                '営業時間': self._extract_bs4_text(soup, [
-                    '.business-hours', '.hours', '[class*="hours"]'
-                ]),
-                '定休日': self._extract_bs4_text(soup, [
-                    '.holiday', '.closed', '[class*="holiday"]'
-                ]),
-                'クレジットカード': self._extract_bs4_text(soup, [
-                    '.credit', '.payment', '[class*="credit"]'
-                ]),
+                '店舗名': '-',
+                '電話番号': '-',
+                '住所': '-',
+                'ジャンル': '-',
+                '営業時間': '-',
+                '定休日': '-',
+                'クレジットカード': '-',
                 '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
-            # データクリーニング
-            for key in detail:
-                if key not in ['URL', '取得日時']:
-                    if not detail[key] or detail[key].strip() == '':
-                        detail[key] = '-'
+            # 段階的にデータ抽出（各項目で軽い再確認）
+            detail['店舗名'] = self._extract_gurunavi_shop_name()
+            detail['電話番号'] = self._extract_gurunavi_phone_number()
+            detail['住所'] = self._extract_gurunavi_address()
+            detail['ジャンル'] = self._extract_gurunavi_genre()
+            detail['営業時間'] = self._extract_gurunavi_business_hours()
+            detail['定休日'] = self._extract_gurunavi_holiday()
+            detail['クレジットカード'] = self._extract_gurunavi_credit_card()
             
             return detail
             
         except Exception as e:
-            self.logger.error(f"データ抽出エラー: {e}")
+            self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
             return self._get_default_detail(url)
-    
-    def _extract_bs4_text(self, soup, selectors):
-        """BeautifulSoupでテキスト抽出"""
+
+    def _extract_gurunavi_shop_name(self):
+        """ぐるなび店舗名抽出（段階的生成対応）"""
+        selectors = [
+            "#info-name",
+            ".fn.org.summary",
+            "#info-table .fn",
+            "h1",
+            ".shop-name",
+            ".restaurant-name"
+        ]
+        
         for selector in selectors:
             try:
-                element = soup.select_one(selector)
-                if element and element.get_text(strip=True):
-                    return element.get_text(strip=True)
+                element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if element and element.text.strip():
+                    name = element.text.strip()
+                    self.logger.debug(f"店舗名取得成功: {selector} = {name}")
+                    return name
+            except (NoSuchElementException, Exception):
+                continue
+        
+        # メタタグからの取得
+        try:
+            element = self.driver.find_element(By.CSS_SELECTOR, "meta[property='og:title']")
+            content = element.get_attribute("content")
+            if content and content.strip():
+                name = content.split(' - ')[0].split('｜')[0].strip()
+                if name and name != 'ぐるなび':
+                    self.logger.debug(f"店舗名取得成功: メタタグ = {name}")
+                    return name
+        except:
+            pass
+        
+        # titleタグから
+        try:
+            title = self.driver.title
+            if title and title.strip():
+                name = title.split(' - ')[0].split('｜')[0].strip()
+                if name and name != 'ぐるなび':
+                    self.logger.debug(f"店舗名取得成功: title = {name}")
+                    return name
+        except:
+            pass
+        
+        self.logger.warning("店舗名の取得に失敗しました")
+        return '-'
+
+    def _extract_gurunavi_phone_number(self):
+        """ぐるなび電話番号抽出（段階的生成対応）"""
+        try:
+            # 優先順位に基づく抽出
+            phone_selectors = [
+                "#info-phone .number",
+                ".number",
+                "#info-phone td span",
+                "#info-phone td li",
+            ]
+            
+            for selector in phone_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        text = element.text.strip()
+                        if text and self._is_valid_phone_number(text):
+                            self.logger.debug(f"電話番号取得成功: {selector} = {text}")
+                            return text
+                except:
+                    continue
+            
+            # tel:リンクからの取得
+            try:
+                tel_elements = self.driver.find_elements(By.CSS_SELECTOR, "a[href^='tel:']")
+                for tel_element in tel_elements:
+                    href = tel_element.get_attribute("href")
+                    if href:
+                        phone = href.replace("tel:", "").strip()
+                        if self._is_valid_phone_number(phone):
+                            self.logger.debug(f"電話番号取得成功: tel:リンク = {phone}")
+                            return phone
+            except:
+                pass
+            
+            # 電話番号行からの正規表現抽出
+            try:
+                phone_row = self.driver.find_element(By.CSS_SELECTOR, "#info-phone td")
+                text = phone_row.text
+                phone_match = re.search(r'(\d{2,4}[-\s]?\d{2,4}[-\s]?\d{3,4})', text)
+                if phone_match and self._is_valid_phone_number(phone_match.group(1)):
+                    phone = phone_match.group(1)
+                    self.logger.debug(f"電話番号取得成功: 正規表現 = {phone}")
+                    return phone
+            except:
+                pass
+            
+            return '-'
+            
+        except Exception as e:
+            self.logger.warning(f"電話番号抽出エラー: {e}")
+            return '-'
+
+    def _extract_gurunavi_address(self):
+        """ぐるなび住所抽出（段階的生成対応）"""
+        selectors = [
+            ".adr .region",
+            ".region",
+            ".adr",
+            ".adr p",
+        ]
+        
+        for selector in selectors:
+            try:
+                element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if element and element.text.strip():
+                    address = element.text.strip()
+                    # 郵便番号を除去
+                    address = re.sub(r'〒\d{3}-\d{4}\s*', '', address)
+                    if address:
+                        self.logger.debug(f"住所取得成功: {selector} = {address}")
+                        return address
             except:
                 continue
-        return '-'
-    
-    def _extract_bs4_phone(self, soup):
-        """BeautifulSoupで電話番号抽出"""
+        
+        # テーブル行からの直接抽出
         try:
-            # tel:リンクから抽出
-            tel_link = soup.select_one('a[href^="tel:"]')
-            if tel_link:
-                href = tel_link.get('href', '')
-                phone = href.replace('tel:', '').strip()
-                if phone and len(phone) >= 10:
-                    return phone
-            
-            # テキストパターンで抽出
-            selectors = ['.tel', '.phone', '[class*="tel"]', '[class*="phone"]']
-            for selector in selectors:
-                element = soup.select_one(selector)
-                if element:
-                    text = element.get_text(strip=True)
-                    phone_match = re.search(r'(\d{2,4}[-\s]?\d{2,4}[-\s]?\d{3,4})', text)
-                    if phone_match:
-                        return phone_match.group(1)
-            
-            return '-'
+            rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr")
+            for row in rows:
+                try:
+                    th = row.find_element(By.TAG_NAME, "th")
+                    if th and "住所" in th.text:
+                        td = row.find_element(By.TAG_NAME, "td")
+                        if td:
+                            address = td.text.strip()
+                            address = re.sub(r'〒\d{3}-\d{4}\s*', '', address)
+                            if address:
+                                self.logger.debug(f"住所取得成功: テーブル行 = {address}")
+                                return address
+                except:
+                    continue
         except:
+            pass
+        
+        self.logger.warning("住所の取得に失敗しました")
+        return '-'
+
+    def _extract_gurunavi_genre(self):
+        """ぐるなびジャンル抽出（段階的生成対応）"""
+        try:
+            # "お店のウリ" から抽出
+            try:
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table-service tr")
+                for row in rows:
+                    try:
+                        th = row.find_element(By.TAG_NAME, "th")
+                        if th and "お店のウリ" in th.text:
+                            td = row.find_element(By.TAG_NAME, "td")
+                            li_elements = td.find_elements(By.TAG_NAME, "li")
+                            if li_elements:
+                                genres = [li.text.strip() for li in li_elements if li.text.strip()]
+                                if genres:
+                                    genre_text = "、".join(genres)
+                                    self.logger.debug(f"ジャンル取得成功: お店のウリ = {genre_text}")
+                                    return genre_text
+                    except:
+                        continue
+            except:
+                pass
+            
+            # メニューのサービスから抽出
+            try:
+                service_rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table-service tr")
+                for row in service_rows:
+                    try:
+                        th = row.find_element(By.TAG_NAME, "th")
+                        if th and "メニューのサービス" in th.text:
+                            td = row.find_element(By.TAG_NAME, "td")
+                            if td:
+                                genre_text = td.text.strip()
+                                if genre_text:
+                                    self.logger.debug(f"ジャンル取得成功: メニューのサービス = {genre_text}")
+                                    return genre_text
+                    except:
+                        continue
+            except:
+                pass
+            
+            # その他のカテゴリ情報
+            category_selectors = [
+                ".category",
+                ".breadcrumb a",
+                "[class*='category']",
+                "[class*='genre']"
+            ]
+            
+            for selector in category_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        text = element.text.strip()
+                        if text and text not in ['ホーム', 'トップ', 'ぐるなび']:
+                            self.logger.debug(f"ジャンル取得成功: {selector} = {text}")
+                            return text
+                except:
+                    continue
+            
             return '-'
+            
+        except Exception as e:
+            self.logger.warning(f"ジャンル抽出エラー: {e}")
+            return '-'
+
+    def _extract_gurunavi_business_hours(self):
+        """ぐるなび営業時間抽出（段階的生成対応）"""
+        try:
+            selectors = [
+                "#info-open td div",
+                "#info-open td",
+                "#info-open",
+            ]
+            
+            for selector in selectors:
+                try:
+                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if element:
+                        hours_text = element.text.strip()
+                        if hours_text and "営業時間" not in hours_text:
+                            hours_text = hours_text.replace('\n', ' ')
+                            hours_text = ' '.join(hours_text.split())
+                            if hours_text:
+                                self.logger.debug(f"営業時間取得成功: {selector} = {hours_text}")
+                                return hours_text
+                except:
+                    continue
+            
+            # テーブル行から直接検索
+            try:
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr")
+                for row in rows:
+                    try:
+                        th = row.find_element(By.TAG_NAME, "th")
+                        if th and "営業時間" in th.text:
+                            td = row.find_element(By.TAG_NAME, "td")
+                            if td:
+                                hours_text = td.text.strip()
+                                if hours_text:
+                                    hours_text = hours_text.replace('\n', ' ')
+                                    hours_text = ' '.join(hours_text.split())
+                                    self.logger.debug(f"営業時間取得成功: テーブル行 = {hours_text}")
+                                    return hours_text
+                    except:
+                        continue
+            except:
+                pass
+            
+            return '-'
+            
+        except Exception as e:
+            self.logger.warning(f"営業時間抽出エラー: {e}")
+            return '-'
+
+    def _extract_gurunavi_holiday(self):
+        """ぐるなび定休日抽出（段階的生成対応）"""
+        try:
+            selectors = [
+                "#info-holiday td li",
+                "#info-holiday td ul li",
+                "#info-holiday td",
+                "#info-holiday",
+            ]
+            
+            for selector in selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        holiday_list = []
+                        for element in elements:
+                            text = element.text.strip()
+                            if text and "定休日" not in text:
+                                holiday_list.append(text)
+                        
+                        if holiday_list:
+                            holiday_text = "、".join(holiday_list)
+                            self.logger.debug(f"定休日取得成功: {selector} = {holiday_text}")
+                            return holiday_text
+                except:
+                    continue
+            
+            # テーブル行から直接検索
+            try:
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr")
+                for row in rows:
+                    try:
+                        th = row.find_element(By.TAG_NAME, "th")
+                        if th and "定休日" in th.text:
+                            td = row.find_element(By.TAG_NAME, "td")
+                            if td:
+                                holiday_text = td.text.strip()
+                                if holiday_text:
+                                    self.logger.debug(f"定休日取得成功: テーブル行 = {holiday_text}")
+                                    return holiday_text
+                    except:
+                        continue
+            except:
+                pass
+            
+            return '-'
+            
+        except Exception as e:
+            self.logger.warning(f"定休日抽出エラー: {e}")
+            return '-'
+
+    def _extract_gurunavi_credit_card(self):
+        """ぐるなびクレジットカード情報抽出（段階的生成対応）"""
+        try:
+            search_terms = [
+                "クレジットカード",
+                "カード",
+                "支払い",
+                "決済",
+                "VISA",
+                "MasterCard",
+                "JCB",
+                "AMEX",
+                "American Express"
+            ]
+            
+            # テーブルから検索
+            try:
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr, #info-table-service tr, #info-table-seat tr")
+                for row in rows:
+                    try:
+                        th = row.find_element(By.TAG_NAME, "th")
+                        th_text = th.text.strip()
+                        
+                        if any(term in th_text for term in search_terms):
+                            td = row.find_element(By.TAG_NAME, "td")
+                            if td:
+                                card_info = td.text.strip()
+                                if card_info:
+                                    self.logger.debug(f"クレジットカード情報取得成功: {th_text} = {card_info}")
+                                    return card_info
+                    except:
+                        continue
+            except:
+                pass
+            
+            # ページ全体から検索
+            try:
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text
+                
+                if any(pattern in page_text for pattern in ['クレジットカード利用可', 'カード利用可', 'VISA利用可']):
+                    self.logger.debug("クレジットカード情報取得成功: 利用可パターン")
+                    return '利用可'
+                elif any(pattern in page_text for pattern in ['クレジットカード不可', 'カード不可', '現金のみ']):
+                    self.logger.debug("クレジットカード情報取得成功: 利用不可パターン")
+                    return '利用不可'
+                elif 'クレジットカード' in page_text:
+                    card_match = re.search(r'クレジットカード[：:]\s*([^\n]+)', page_text)
+                    if card_match:
+                        card_info = card_match.group(1).strip()
+                        self.logger.debug(f"クレジットカード情報取得成功: 正規表現 = {card_info}")
+                        return card_info
+                    return '要確認'
+            except:
+                pass
+            
+            return '-'
+            
+        except Exception as e:
+            self.logger.warning(f"クレジットカード情報抽出エラー: {e}")
+            return '-'
+
+    def _is_valid_phone_number(self, phone_str):
+        """電話番号の妥当性チェック"""
+        if not phone_str:
+            return False
+        
+        # 数字とハイフンのみ抽出
+        cleaned = re.sub(r'[^\d-]', '', str(phone_str))
+        
+        # 基本的な電話番号のパターンチェック
+        patterns = [
+            r'^\d{2,4}-\d{2,4}-\d{3,4}' # 03-1234-5678
+            ,  
+            r'^\d{10,11}'   # 03123456789
+            ,                 
+            r'^\d{2,4}\d{2,4}\d{3,4}'   # 区切りなし
+            
+        ]
+        
+        for pattern in patterns:
+            if re.match(pattern, cleaned):
+                digits_only = cleaned.replace('-', '')
+                return 10 <= len(digits_only) <= 11
+        
+        return False
     
     def _get_default_detail(self, url):
         """デフォルトの店舗データ"""
@@ -684,15 +1175,15 @@ class ImprovedScraperEngine:
         }
     
     def start_processing(self, store_list, search_params):
-        """メイン処理開始"""
+        """メイン処理開始（段階的読み込み対応）"""
         self.stats['start_time'] = time.time()
         self.stats['total_stores'] = len(store_list)
         self.current_results = []
         
-        self.logger.info(f"=== 処理開始 ===")
+        self.logger.info(f"=== 処理開始 (段階的動的生成対応版) ===")
         self.logger.info(f"対象店舗数: {len(store_list)}")
         self.logger.info(f"時間帯倍率: {self.time_multiplier}x")
-        self.logger.info(f"予想処理時間: {len(store_list) * 7 * self.time_multiplier / 60:.1f}分")
+        self.logger.info(f"予想処理時間: {len(store_list) * 8 * self.time_multiplier / 60:.1f}分")  # 段階的読み込み考慮
         
         if not self.initialize_driver():
             raise Exception("ドライバー初期化失敗")
