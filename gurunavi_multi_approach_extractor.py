@@ -11,7 +11,7 @@ import re
 import time
 import logging
 
-class GurunaviImprovedExtractor:
+class GurunaviMultiApproachExtractor:
     """改善版ぐるなび店舗情報抽出クラス"""
     
     def __init__(self, driver, logger=None):
@@ -396,79 +396,19 @@ class GurunaviImprovedExtractor:
             '取得日時': self._get_current_datetime()
         }
 
-
-# デバッグ用：詳細な情報を出力する関数
-def debug_address_extraction(driver, url):
-    """住所取得のデバッグ"""
-    print("\n=== 住所取得デバッグ ===")
-    print(f"URL: {url}")
-    
-    # ページ読み込み
-    driver.get(url)
-    time.sleep(3)
-    
-    # アコーディオン項目をすべて取得
-    items = driver.find_elements(By.CLASS_NAME, "commonAccordion_content_item")
-    print(f"\nアコーディオン項目数: {len(items)}")
-    
-    for i, item in enumerate(items):
-        try:
-            title = item.find_element(By.CLASS_NAME, "commonAccordion_content_item_title")
-            desc = item.find_element(By.CLASS_NAME, "commonAccordion_content_item_desc")
-            
-            print(f"\n--- 項目 {i+1} ---")
-            print(f"タイトル: {title.text.strip()}")
-            print(f"説明全体: {desc.text.strip()[:200]}...")  # 最初の200文字
-            
-            # 住所項目の場合、詳細に解析
-            if "住所" in title.text:
-                print("\n★ 住所項目の詳細解析:")
-                
-                # p要素を個別にチェック
-                p_elements = desc.find_elements(By.TAG_NAME, "p")
-                print(f"p要素数: {len(p_elements)}")
-                
-                for j, p in enumerate(p_elements):
-                    text = p.text.strip()
-                    print(f"  p[{j}]: {text}")
-                    
-                    # クラス名も確認
-                    class_name = p.get_attribute("class")
-                    if class_name:
-                        print(f"    class: {class_name}")
-                
-                # その他の要素も確認
-                all_children = desc.find_elements(By.XPATH, ".//*")
-                print(f"\n全子要素数: {len(all_children)}")
-                for child in all_children[:10]:  # 最初の10個
-                    print(f"  {child.tag_name}: {child.text[:50] if child.text else '(empty)'}")
+    # scraper_engine.pyへの統合例
+    def integrate_improved_extractor(self):
+        """
+        scraper_engine.pyのImprovedScraperEngineクラスに統合
+        """
         
-        except Exception as e:
-            print(f"項目 {i+1} エラー: {e}")
-    
-    # 抽出器でテスト
-    print("\n\n=== 抽出器による取得結果 ===")
-    extractor = GurunaviImprovedExtractor(driver)
-    result = extractor.extract_store_data(url)
-    for key, value in result.items():
-        print(f"{key}: {value}")
-    
-    return result
-
-
-# scraper_engine.pyへの統合例
-def integrate_improved_extractor(self):
-    """
-    scraper_engine.pyのImprovedScraperEngineクラスに統合
-    """
-    
-    def _extract_gurunavi_store_data(self, url):
-        """ぐるなび店舗データ抽出（改善版）"""
-        try:
-            # 改善版抽出器を使用
-            extractor = GurunaviImprovedExtractor(self.driver, self.logger)
-            return extractor.extract_store_data(url)
-            
-        except Exception as e:
-            self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
-            return self._get_default_detail(url)
+        def _extract_gurunavi_store_data(self, url):
+            """ぐるなび店舗データ抽出（改善版）"""
+            try:
+                # 改善版抽出器を使用
+                extractor = GurunaviImprovedExtractor(self.driver, self.logger)
+                return extractor.extract_store_data(url)
+                
+            except Exception as e:
+                self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
+                return self._get_default_detail(url)
