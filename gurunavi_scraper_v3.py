@@ -1,6 +1,6 @@
 """
 ぐるなび店舗情報スクレイピングツール v3.0
-現実的処理時間対応版
+現実的処理時間対応版（店舗一覧保存削除・4項目のみ出力）
 """
 
 import tkinter as tk
@@ -24,8 +24,8 @@ class GurunaviScraperApp:
     
     def __init__(self):
         self.window = tk.Tk()
-        self.window.title("ぐるなび店舗情報取得ツール v3.0（現実的処理時間対応版）")
-        self.window.geometry("800x650")
+        self.window.title("ぐるなび店舗情報取得ツール")
+        self.window.geometry("650x800")
         self.window.resizable(True, True)
         
         # 設定・パス
@@ -53,7 +53,7 @@ class GurunaviScraperApp:
         # UI構築
         self.ui_manager.setup_ui()
         
-        self.logger.info("アプリケーション起動完了 v3.0（現実的処理時間対応版）")
+        self.logger.info("アプリケーション起動完了")
     
     def setup_logging(self):
         """ログ設定"""
@@ -220,7 +220,7 @@ class GurunaviScraperApp:
         return True
     
     def scraping_worker(self, search_params):
-        """現実的処理時間対応スクレイピングワーカー"""
+        """現実的処理時間対応スクレイピングワーカー（店舗一覧保存削除版）"""
         try:
             self.logger.info(f"スクレイピング開始: {search_params}")
             
@@ -252,15 +252,47 @@ class GurunaviScraperApp:
             
             self.logger.info(f"店舗一覧取得完了: {len(store_list)}件")
             
-            # 店舗一覧をExcelに保存
-            self.scraper_engine.save_store_list(
-                store_list,
-                search_params['save_path'],
-                search_params['filename'] + "_list"
-            )
+            # 店舗一覧のExcel保存は削除
+            # （以前はここでsave_store_listを呼び出していたが削除）
             
             # URL取得のみオプション
             if search_params.get('url_only', False):
+                # URL取得のみの場合も4項目形式で保存
+                url_data = []
+                for store in store_list:
+                    url_data.append({
+                        'URL': store['url'],
+                        '店舗名': store['name'],
+                        '電話番号': '-',
+                        '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                
+                # 保存
+                save_dir = Path(search_params['save_path'])
+                save_dir.mkdir(parents=True, exist_ok=True)
+                filename = search_params['filename']
+                if not filename.endswith('.xlsx'):
+                    filename += '.xlsx'
+                full_path = save_dir / filename
+                
+                df = pd.DataFrame(url_data)
+                with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name='店舗情報', index=False)
+                    
+                    # 列幅調整
+                    worksheet = writer.sheets['店舗情報']
+                    for column in worksheet.columns:
+                        max_length = 0
+                        column_letter = column[0].column_letter
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = min(max_length + 2, 50)
+                        worksheet.column_dimensions[column_letter].width = adjusted_width
+                
                 self.update_progress({
                     'phase': 'complete',
                     'message': f'URL取得完了: {len(store_list)}件',
@@ -272,7 +304,8 @@ class GurunaviScraperApp:
                     "完了",
                     f"店舗URL取得が完了しました\n\n"
                     f"取得件数: {len(store_list)}件\n"
-                    f"処理時間: {time.time() - self.start_time:.1f}秒"
+                    f"処理時間: {(time.time() - self.start_time):.1f}秒\n"
+                    f"保存ファイル: {filename}"
                 )
                 return
             
@@ -331,11 +364,7 @@ class GurunaviScraperApp:
                             f"成功件数: {success_count}件\n"
                             f"失敗件数: {len(self.scraped_stores) - success_count}件\n"
                             f"処理時間: {elapsed_time/60:.1f}分\n"
-                            f"平均時間/店舗: {elapsed_time/len(self.scraped_stores):.1f}秒\n\n"
-                            f"=== その他統計 ===\n"
-                            f"UA切り替え: {stats.get('UA切り替え回数', 0)}回\n"
-                            f"CAPTCHA遭遇: {stats.get('CAPTCHA遭遇回数', 0)}回\n"
-                            f"IP制限遭遇: {stats.get('IP制限遭遇回数', 0)}回\n\n"
+                            f"平均時間/店舗: {elapsed_time/len(self.scraped_stores) if self.scraped_stores else 0:.1f}秒\n\n"
                             f"結果ファイル: {search_params['filename']}.xlsx"
                         )
                         

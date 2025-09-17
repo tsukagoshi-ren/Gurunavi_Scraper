@@ -610,74 +610,7 @@ class ImprovedScraperEngine:
         except Exception as e:
             self.logger.error(f"店舗詳細取得エラー: {e}")
             return self._get_default_detail(url)
-        
-    # def get_store_detail(self, url):
-    #     """段階的動的生成対応店舗詳細取得"""
-    #     max_retries = 2
-        
-    #     for attempt in range(max_retries):
-    #         try:
-    #             self.access_count += 1
-    #             self.stats['processed_stores'] += 1
-    #             self._update_estimated_completion()
-                
-    #             self.logger.info(f"店舗詳細取得開始 ({attempt + 1}/{max_retries}): {url}")
-                
-    #             # ページアクセス
-    #             start_time = time.time()
-    #             self.driver.get(url)
-                
-    #             # 段階的コンテンツ読み込み完了待機
-    #             stepwise_loaded = self._wait_for_stepwise_content_load()
-                
-    #             if not stepwise_loaded:
-    #                 self.logger.warning("段階的読み込み確認できませんが処理続行")
-                
-    #             # CAPTCHA・IP制限チェック
-    #             if self._detect_captcha():
-    #                 self.stats['captcha_encounters'] += 1
-    #                 self.logger.warning("CAPTCHA検知 - 待機中")
-    #                 time.sleep(self.config.get('captcha_delay', 30))
-    #                 continue
-                    
-    #             if self._detect_ip_restriction():
-    #                 self.stats['ip_restrictions'] += 1
-    #                 self.logger.warning("IP制限検知 - 長時間待機")
-    #                 time.sleep(self.config.get('ip_limit_delay', 60))
-    #                 continue
-                
-    #             # 店舗詳細データ抽出
-    #             detail = self._extract_gurunavi_store_data(url)
-                
-    #             processing_time = time.time() - start_time
-    #             self.logger.info(f"店舗詳細取得完了: {detail.get('店舗名', 'Unknown')} ({processing_time:.1f}秒)")
-                
-    #             self.stats['successful_stores'] += 1
-    #             self.wait_with_cooltime()
-                
-    #             return detail
-                
-    #         except Exception as e:
-    #             self.logger.warning(f"店舗詳細取得エラー (試行{attempt + 1}/{max_retries}): {e}")
-                
-    #             if attempt < max_retries - 1:
-    #                 retry_delay = self.config.get('retry_delay', 5) * self.time_multiplier
-    #                 time.sleep(retry_delay)
-                    
-    #                 if attempt == max_retries - 2:
-    #                     try:
-    #                         self.switch_user_agent()
-    #                     except:
-    #                         self.cleanup()
-    #                         if not self.initialize_driver():
-    #                             break
-    #             else:
-    #                 self.stats['failed_stores'] += 1
-        
-    #     # 失敗時のデフォルトデータ
-    #     self.logger.error(f"店舗詳細取得最終失敗: {url}")
-    #     return self._get_default_detail(url)
-    
+            
     def _detect_captcha(self):
         """CAPTCHA検知"""
         try:
@@ -718,45 +651,114 @@ class ImprovedScraperEngine:
         except Exception:
             return False
 
+    """
+    修正箇所のみ抜粋：scraper_engine.py
+
+    1. _extract_gurunavi_store_dataメソッドを修正（4項目のみ）
+    2. save_store_listメソッドの呼び出しを削除
+    3. 電話番号クリーニング処理を追加
+    """
+
+    # 1. _extract_gurunavi_store_dataメソッドの修正版
     def _extract_gurunavi_store_data(self, url):
+        """ぐるなび店舗データ抽出（4項目のみ）"""
         try:
-            extractor = GurunaviLabelBasedExtractor(self.driver, self.logger)
-            return extractor.extract_store_data(url)
+            from datetime import datetime
+            
+            # 基本情報の初期化（4項目のみ）
+            detail = {
+                'URL': url,
+                '店舗名': '-',
+                '電話番号': '-',
+                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            # 店舗名を取得
+            detail['店舗名'] = self._extract_gurunavi_shop_name()
+            
+            # 電話番号を取得してクリーニング
+            raw_phone = self._extract_gurunavi_phone_number()
+            detail['電話番号'] = self._clean_phone_number(raw_phone)
+            
+            return detail
+            
         except Exception as e:
-            self.logger.error(f"データ抽出エラー: {e}")
+            self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
+            return self._get_default_detail(url)
+
+    # 2. 電話番号クリーニング用メソッドを追加
+    def _clean_phone_number(self, raw_text):
+        """電話番号クリーニング処理"""
+        if not raw_text or raw_text == '-':
+            return raw_text
+        
+        try:
+            import re
+            
+            # 改行で分割して最初の行を取得
+            lines = raw_text.strip().split('\n')
+            first_line = lines[0].strip() if lines else raw_text.strip()
+            
+            # 電話番号パターンにマッチする部分を抽出
+            patterns = [
+                r'(0\d{1,4}-\d{1,4}-\d{3,4})',
+                r'(0\d{9,10})',
+                r'(050-\d{4}-\d{4})',
+                r'(0120-\d{3}-\d{3})',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, first_line)
+                if match:
+                    phone = match.group(1)
+                    self.logger.debug(f"電話番号クリーニング: '{raw_text[:30]}...' → '{phone}'")
+                    return phone
+            
+            # マッチしない場合、不要な文言を除外
+            if any(kw in first_line for kw in ['ぐるなび', '見た', 'スムーズ', '問合']):
+                numbers = re.findall(r'[\d-]+', first_line)
+                if numbers:
+                    phone = numbers[0]
+                    digits_only = re.sub(r'[^\d]', '', phone)
+                    if 10 <= len(digits_only) <= 11:
+                        return phone
+            
+            return first_line
+            
+        except Exception as e:
+            self.logger.warning(f"電話番号クリーニングエラー: {e}")
+            return raw_text
+
+    # 3. _get_default_detailメソッドを修正（4項目のみ）
+    def _get_default_detail(self, url):
+        """デフォルトの店舗データ（4項目のみ）"""
+        from datetime import datetime
+        return {
+            'URL': url,
+            '店舗名': '取得失敗',
+            '電話番号': '-',
+            '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+    # 4. GurunaviLabelBasedExtractorを使用する場合の修正
+    def get_store_detail(self, url):
+        """店舗詳細取得（4項目のみ）"""
+        try:
+            self.driver.get(url)
+            
+            # 段階的コンテンツ読み込み
+            self._wait_for_stepwise_content_load()
+            
+            # データ抽出（4項目のみ）
+            detail = self._extract_gurunavi_store_data(url)
+            
+            self.wait_with_cooltime()
+            return detail
+            
+        except Exception as e:
+            self.logger.error(f"店舗詳細取得エラー: {e}")
             return self._get_default_detail(url)
         
-    # def _extract_gurunavi_store_data(self, url):
-    #     """ぐるなび店舗データ抽出（段階的生成対応）"""
-    #     try:
-    #         # 基本情報の初期化
-    #         detail = {
-    #             'URL': url,
-    #             '店舗名': '-',
-    #             '電話番号': '-',
-    #             '住所': '-',
-    #             'ジャンル': '-',
-    #             '営業時間': '-',
-    #             '定休日': '-',
-    #             'クレジットカード': '-',
-    #             '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    #         }
-            
-    #         # 段階的にデータ抽出（各項目で軽い再確認）
-    #         detail['店舗名'] = self._extract_gurunavi_shop_name()
-    #         detail['電話番号'] = self._extract_gurunavi_phone_number()
-    #         detail['住所'] = self._extract_gurunavi_address()
-    #         detail['ジャンル'] = self._extract_gurunavi_genre()
-    #         detail['営業時間'] = self._extract_gurunavi_business_hours()
-    #         detail['定休日'] = self._extract_gurunavi_holiday()
-    #         detail['クレジットカード'] = self._extract_gurunavi_credit_card()
-            
-    #         return detail
-            
-    #     except Exception as e:
-    #         self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
-    #         return self._get_default_detail(url)
-
     def _extract_gurunavi_shop_name(self):
         """ぐるなび店舗名抽出（段階的生成対応）"""
         selectors = [

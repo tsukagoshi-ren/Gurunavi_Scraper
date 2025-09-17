@@ -52,7 +52,7 @@ class UIManager:
         # タイトル
         title_label = ttk.Label(
             main_frame,
-            text="ぐるなび店舗情報取得ツール v3.0（現実的処理時間対応版）",
+            text="ぐるなび店舗情報取得ツール",
             font=('Arial', 14, 'bold')
         )
         title_label.grid(row=0, column=0, pady=(0, 10))

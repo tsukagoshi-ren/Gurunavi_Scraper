@@ -15,36 +15,76 @@ class GurunaviLabelBasedExtractor:
         self.driver = driver
         self.logger = logger or logging.getLogger(__name__)
     
-    def extract_store_data(self, url):
-        """店舗詳細データをラベルベースで抽出"""
+    def extract_store_data_modified(self, url):
+        """店舗詳細データを抽出（4項目のみ）"""
         try:
-            # 基本情報の初期化
+            from datetime import datetime
+            import re
+            
+            # 基本情報の初期化（4項目のみ）
             detail = {
                 'URL': url,
                 '店舗名': '-',
                 '電話番号': '-',
-                '住所': '-',
-                'ジャンル': '-',
-                '営業時間': '-',
-                '定休日': '-',
-                'クレジットカード': '-',
-                '取得日時': self._get_current_datetime()
+                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
-            # 各項目をラベルベースで抽出
+            # 店舗名を取得
             detail['店舗名'] = self._extract_shop_name()
-            detail['電話番号'] = self._extract_phone_by_label()
-            detail['住所'] = self._extract_address_by_label()
-            detail['ジャンル'] = self._extract_genre_by_label()
-            detail['営業時間'] = self._extract_business_hours_by_label()
-            detail['定休日'] = self._extract_holiday_by_label()
-            detail['クレジットカード'] = self._extract_credit_card_by_label()
+            
+            # 電話番号を取得してクリーニング
+            raw_phone = self._extract_phone_by_label()
+            detail['電話番号'] = self._clean_phone_number(raw_phone)
             
             return detail
             
         except Exception as e:
             self.logger.error(f"データ抽出エラー: {e}")
-            return self._get_default_detail(url)
+            return {
+                'URL': url,
+                '店舗名': '取得失敗',
+                '電話番号': '-',
+                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+    def _clean_phone_number(self, raw_text):
+        """電話番号クリーニング処理"""
+        if not raw_text or raw_text == '-':
+            return raw_text
+
+        try:
+            import re
+            
+            # 改行で分割して最初の行を取得
+            lines = raw_text.strip().split('\n')
+            first_line = lines[0].strip() if lines else raw_text.strip()
+            
+            # 電話番号パターンにマッチする部分を抽出
+            patterns = [
+                r'(0\d{1,4}-\d{1,4}-\d{3,4})',
+                r'(0\d{9,10})',
+                r'(050-\d{4}-\d{4})',
+                r'(0120-\d{3}-\d{3})',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, first_line)
+                if match:
+                    return match.group(1)
+            
+            # マッチしない場合、「ぐるなび」等が含まれていたら除外
+            if any(kw in first_line for kw in ['ぐるなび', '見た', 'スムーズ', '問合']):
+                numbers = re.findall(r'[\d-]+', first_line)
+                if numbers:
+                    phone = numbers[0]
+                    digits_only = re.sub(r'[^\d]', '', phone)
+                    if 10 <= len(digits_only) <= 11:
+                        return phone
+            
+            return first_line if '電話' not in first_line else raw_text
+            
+        except:
+            return raw_text
     
     def _extract_shop_name(self):
         """店舗名を抽出"""

@@ -19,39 +19,41 @@ class GurunaviMultiApproachExtractor:
         self.logger = logger or logging.getLogger(__name__)
         self.wait = WebDriverWait(driver, 15)
     
-    def extract_store_data(self, url):
-        """店舗データを抽出（ジャンル・クレカ除外版）"""
+    def extract_store_data_multi_modified(self, url):
+        """店舗データを抽出（4項目のみ）"""
         try:
-            # 基本情報の初期化
+            from datetime import datetime
+            
+            # 基本情報の初期化（4項目のみ）
             detail = {
                 'URL': url,
                 '店舗名': '-',
                 '電話番号': '-',
-                '住所': '-',
-                '営業時間': '-',
-                '定休日': '-',
-                '取得日時': self._get_current_datetime()
+                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
             # ページが完全に読み込まれるのを待つ
             self._ensure_page_loaded()
             
-            # 各項目を取得
+            # 店舗名を取得
             detail['店舗名'] = self._extract_shop_name()
-            detail['電話番号'] = self._extract_phone_number()
-            detail['住所'] = self._extract_address_improved()
-            detail['営業時間'] = self._extract_business_hours_improved()
-            detail['定休日'] = self._extract_holiday_improved()
+            
+            # 電話番号を取得してクリーニング
+            raw_phone = self._extract_phone_number()
+            detail['電話番号'] = self._clean_phone_number(raw_phone)
             
             self.logger.info(f"取得結果: {detail}")
             return detail
             
         except Exception as e:
             self.logger.error(f"データ抽出エラー: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return self._get_default_detail(url)
-    
+            return {
+                'URL': url,
+                '店舗名': '取得失敗',
+                '電話番号': '-',
+                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
     def _ensure_page_loaded(self):
         """ページが完全に読み込まれることを確認"""
         try:
