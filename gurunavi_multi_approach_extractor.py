@@ -17,12 +17,20 @@ class GurunaviMultiApproachExtractor:
     def __init__(self, driver, logger=None):
         self.driver = driver
         self.logger = logger or logging.getLogger(__name__)
+        # driver が None でないことを確認
+        if self.driver is None:
+            raise ValueError("Driver cannot be None")
         self.wait = WebDriverWait(driver, 15)
     
     def extract_store_data_multi(self, url):
         """店舗データを抽出（4項目のみ）"""
         try:
             from datetime import datetime
+            
+            # driver の存在確認
+            if self.driver is None:
+                self.logger.error("Driver is None in extract_store_data_multi")
+                return self._get_default_detail(url)
             
             # 基本情報の初期化（4項目のみ）
             detail = {
@@ -47,18 +55,16 @@ class GurunaviMultiApproachExtractor:
             
         except Exception as e:
             self.logger.error(f"データ抽出エラー: {e}")
-            return {
-                'URL': url,
-                '店舗名': '取得失敗',
-                '電話番号': '-',
-                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
+            return self._get_default_detail(url)
             
     def _ensure_page_loaded(self):
         """ページが完全に読み込まれることを確認"""
         try:
-            # 複数の方法で読み込み完了を確認
-            
+            # driver の存在確認
+            if self.driver is None:
+                self.logger.error("Driver is None in _ensure_page_loaded")
+                return
+                
             # 1. JavaScriptの読み込み完了を待つ
             self.driver.execute_script("return document.readyState") == "complete"
             
@@ -79,6 +85,10 @@ class GurunaviMultiApproachExtractor:
     def _try_expand_accordions(self):
         """アコーディオンメニューを展開する"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                return
+                
             # アコーディオンのトグルボタンを探してクリック
             accordion_buttons = self.driver.find_elements(By.CSS_SELECTOR, 
                 "[class*='accordion'][class*='button'], [class*='accordion'][class*='trigger'], .js-accordion-trigger")
@@ -97,6 +107,11 @@ class GurunaviMultiApproachExtractor:
     def _extract_shop_name(self):
         """店舗名を取得（既存メソッドで成功しているので維持）"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                self.logger.error("Driver is None in _extract_shop_name")
+                return '-'
+                
             # JavaScriptで取得
             js_script = """
             const h1 = document.querySelector('h1');
@@ -122,6 +137,11 @@ class GurunaviMultiApproachExtractor:
     def _extract_phone_number(self):
         """電話番号を取得（既存メソッドで成功しているので維持）"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                self.logger.error("Driver is None in _extract_phone_number")
+                return '-'
+                
             # JavaScriptで取得
             js_script = """
             // 電話番号を探す複数の方法
@@ -167,9 +187,25 @@ class GurunaviMultiApproachExtractor:
         
         return '-'
     
+    def _is_valid_phone_number(self, phone_str):
+        """電話番号の妥当性チェック（追加メソッド）"""
+        if not phone_str:
+            return False
+        
+        # 数字とハイフンのみ抽出
+        cleaned = re.sub(r'[^\d-]', '', str(phone_str))
+        
+        # 10-11桁の数字があるかチェック
+        digits_only = cleaned.replace('-', '')
+        return 10 <= len(digits_only) <= 11
+    
     def _extract_address_improved(self):
         """住所を改善された方法で取得"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                return '-'
+                
             # 方法1: JavaScriptで詳細に取得
             js_script = """
             // 住所ラベルを含む要素を探す
@@ -266,6 +302,10 @@ class GurunaviMultiApproachExtractor:
     def _extract_business_hours_improved(self):
         """営業時間を改善された方法で取得"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                return '-'
+                
             # JavaScriptで取得
             js_script = """
             const items = document.querySelectorAll('.commonAccordion_content_item');
@@ -319,6 +359,10 @@ class GurunaviMultiApproachExtractor:
     def _extract_holiday_improved(self):
         """定休日を改善された方法で取得"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                return '-'
+                
             # JavaScriptで取得
             js_script = """
             const items = document.querySelectorAll('.commonAccordion_content_item');
@@ -370,45 +414,45 @@ class GurunaviMultiApproachExtractor:
         return '-'
     
     def _clean_phone_number(self, raw_text):
-            """電話番号クリーニング処理"""
-            if not raw_text or raw_text == '-':
-                return raw_text
+        """電話番号クリーニング処理"""
+        if not raw_text or raw_text == '-':
+            return raw_text
+        
+        try:
+            # 改行で分割して最初の行を取得
+            lines = raw_text.strip().split('\n')
+            first_line = lines[0].strip() if lines else raw_text.strip()
             
-            try:
-                # 改行で分割して最初の行を取得
-                lines = raw_text.strip().split('\n')
-                first_line = lines[0].strip() if lines else raw_text.strip()
-                
-                # 電話番号パターンにマッチする部分を抽出
-                patterns = [
-                    r'(0\d{1,4}-\d{1,4}-\d{3,4})',
-                    r'(0\d{9,10})',
-                    r'(050-\d{4}-\d{4})',
-                    r'(0120-\d{3}-\d{3})',
-                ]
-                
-                for pattern in patterns:
-                    match = re.search(pattern, first_line)
-                    if match:
-                        phone = match.group(1)
-                        self.logger.debug(f"電話番号クリーニング: '{raw_text[:30]}...' → '{phone}'")
+            # 電話番号パターンにマッチする部分を抽出
+            patterns = [
+                r'(0\d{1,4}-\d{1,4}-\d{3,4})',
+                r'(0\d{9,10})',
+                r'(050-\d{4}-\d{4})',
+                r'(0120-\d{3}-\d{3})',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, first_line)
+                if match:
+                    phone = match.group(1)
+                    self.logger.debug(f"電話番号クリーニング: '{raw_text[:30]}...' → '{phone}'")
+                    return phone
+            
+            # マッチしない場合、不要な文言を除外
+            if any(kw in first_line for kw in ['ぐるなび', '見た', 'スムーズ', '問合']):
+                numbers = re.findall(r'[\d-]+', first_line)
+                if numbers:
+                    phone = numbers[0]
+                    digits_only = re.sub(r'[^\d]', '', phone)
+                    if 10 <= len(digits_only) <= 11:
                         return phone
-                
-                # マッチしない場合、不要な文言を除外
-                if any(kw in first_line for kw in ['ぐるなび', '見た', 'スムーズ', '問合']):
-                    numbers = re.findall(r'[\d-]+', first_line)
-                    if numbers:
-                        phone = numbers[0]
-                        digits_only = re.sub(r'[^\d]', '', phone)
-                        if 10 <= len(digits_only) <= 11:
-                            return phone
-                
-                return first_line
-                
-            except Exception as e:
-                self.logger.warning(f"電話番号クリーニングエラー: {e}")
-                return raw_text
             
+            return first_line
+            
+        except Exception as e:
+            self.logger.warning(f"電話番号クリーニングエラー: {e}")
+            return raw_text
+    
     def _get_current_datetime(self):
         """現在日時を取得"""
         from datetime import datetime
@@ -416,29 +460,27 @@ class GurunaviMultiApproachExtractor:
     
     def _get_default_detail(self, url):
         """デフォルトの店舗データ"""
+        from datetime import datetime
         return {
             'URL': url,
             '店舗名': '取得失敗',
             '電話番号': '-',
-            '住所': '-',
-            '営業時間': '-',
-            '定休日': '-',
-            '取得日時': self._get_current_datetime()
+            '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
-    # scraper_engine.pyへの統合例
-    def integrate_improved_extractor(self):
-        """
-        scraper_engine.pyのImprovedScraperEngineクラスに統合
-        """
-        
-        def _extract_gurunavi_store_data(self, url):
-            """ぐるなび店舗データ抽出（改善版）"""
-            try:
-                # 改善版抽出器を使用
-                extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
-                return extractor.extract_store_data_multi(url)
-                
-            except Exception as e:
-                self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
-                return self._get_default_detail(url)
+# scraper_engine.pyへの統合例
+def integrate_improved_extractor(self):
+    """
+    scraper_engine.pyのImprovedScraperEngineクラスに統合
+    """
+    
+    def _extract_gurunavi_store_data(self, url):
+        """ぐるなび店舗データ抽出（改善版）"""
+        try:
+            # 改善版抽出器を使用
+            extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
+            return extractor.extract_store_data_multi(url)
+            
+        except Exception as e:
+            self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
+            return self._get_default_detail(url)

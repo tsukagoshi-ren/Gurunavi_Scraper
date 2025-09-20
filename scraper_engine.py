@@ -560,6 +560,11 @@ class ImprovedScraperEngine:
     def get_store_detail(self, url):
         """店舗詳細取得（4項目のみ）"""
         try:
+            # driver の存在確認
+            if self.driver is None:
+                self.logger.error("Driver is None before creating extractor")
+                return self._get_default_detail(url)
+                
             self.driver.get(url)
             
             # 段階的コンテンツ読み込み

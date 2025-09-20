@@ -1,6 +1,7 @@
 """
 UI管理クラス（シンプル版）
 中央寄せデザインで視認性を向上
+おすすめエリア対応版
 """
 
 import tkinter as tk
@@ -19,7 +20,7 @@ class UIManager:
         
         # UI変数
         self.prefecture_var = tk.StringVar()
-        self.city_var = tk.StringVar()
+        self.city_var = tk.StringVar()  # エリア名を格納（変数名は互換性のためそのまま）
         self.max_count_var = tk.IntVar(value=30)
         self.unlimited_var = tk.BooleanVar(value=False)
         self.save_path_var = tk.StringVar(value=str(Path.home() / "Downloads"))
@@ -91,7 +92,7 @@ class UIManager:
         main_frame.rowconfigure(1, weight=1)
     
     def setup_search_tab(self):
-        """検索タブ構築"""
+        """検索タブ構築（エリア対応版）"""
         # メインコンテナ
         container = ttk.Frame(self.search_tab, padding="20")
         container.grid(row=0, column=0, sticky='nsew')
@@ -124,16 +125,17 @@ class UIManager:
         self.prefecture_combo.grid(row=0, column=1, pady=8, padx=(0, 20))
         self.prefecture_combo.bind('<<ComboboxSelected>>', self.on_prefecture_changed)
         
-        # 市区町村
-        ttk.Label(search_frame, text="市区町村:").grid(row=1, column=0, sticky='w', padx=(20, 10), pady=8)
+        # エリア（旧：市区町村）
+        ttk.Label(search_frame, text="エリア:").grid(row=1, column=0, sticky='w', padx=(20, 10), pady=8)
         self.city_combo = ttk.Combobox(
             search_frame,
             textvariable=self.city_var,
-            width=28
+            width=28,
+            state='readonly'  # 読み取り専用に変更
         )
         self.city_combo.grid(row=1, column=1, pady=8, padx=(0, 20))
         
-        # 市区町村情報ラベル
+        # エリア情報ラベル
         self.city_info_label = ttk.Label(
             search_frame,
             text="※都道府県を選択してください",
@@ -428,7 +430,7 @@ class UIManager:
             self.count_entry.config(state='normal')
     
     def on_prefecture_changed(self, event):
-        """都道府県変更時の処理（全国対応）"""
+        """都道府県変更時の処理（エリア対応版）"""
         prefecture = self.prefecture_var.get()
         if prefecture:
             self.app.on_prefecture_changed(prefecture)
@@ -436,21 +438,21 @@ class UIManager:
             # 全国選択時の処理
             if prefecture == '全国':
                 self.city_combo.config(state='disabled')
-                self.city_info_label.config(text="※全国選択時は市区町村指定不可")
+                self.city_info_label.config(text="※全国選択時はエリア指定不可")
                 self.city_var.set('')
             else:
-                cities = self.app.prefecture_mapper.get_cities(prefecture)
-                if cities:
-                    # リストに市区町村がある場合
+                areas = self.app.prefecture_mapper.get_cities(prefecture)
+                if areas:
+                    # エリアリストがある場合
                     self.city_combo.config(state='readonly')
-                    self.city_info_label.config(text="※リストから選択可能")
+                    self.city_info_label.config(text=f"※{len(areas)}個のおすすめエリアから選択可能")
                 else:
-                    # リストに市区町村がない場合は手動入力可能
-                    self.city_combo.config(state='normal')
-                    self.city_info_label.config(text="※手動で市区町村名を入力可能")
+                    # エリアリストがない場合
+                    self.city_combo.config(state='disabled')
+                    self.city_info_label.config(text="※エリア情報がありません")
     
     def update_city_list(self, cities):
-        """市区町村リスト更新"""
+        """エリアリスト更新（変数名は互換性のためそのまま）"""
         self.city_combo['values'] = [''] + cities
         self.city_var.set('')
     
@@ -464,7 +466,13 @@ class UIManager:
         """自動ファイル名生成"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefecture = self.prefecture_var.get() or "gurunavi"
-        filename = f"{prefecture}_stores_{timestamp}"
+        area = self.city_var.get()
+        if area:
+            # ファイル名用にエリア名から特殊文字を安全な文字に変換
+            safe_area = area.replace('・', '_').replace('（', '').replace('）', '').replace(' ', '')
+            filename = f"{prefecture}_{safe_area}_{timestamp}"
+        else:
+            filename = f"{prefecture}_stores_{timestamp}"
         self.filename_var.set(filename)
     
     def fix_chromedriver(self):
@@ -581,12 +589,12 @@ class UIManager:
         """検索パラメータ取得"""
         params = {
             'prefecture': self.prefecture_var.get(),
-            'city': self.city_var.get(),
+            'city': self.city_var.get(),  # エリア名が格納される
             'max_count': self.max_count_var.get(),
             'unlimited': self.unlimited_var.get(),
             'save_path': self.save_path_var.get(),
             'filename': self.filename_var.get(),
-            'url_only': False  # 削除されたオプション
+            'url_only': False
         }
         return params
     
