@@ -129,10 +129,18 @@ class UIManager:
         self.city_combo = ttk.Combobox(
             search_frame,
             textvariable=self.city_var,
-            width=28,
-            state='readonly'
+            width=28
         )
         self.city_combo.grid(row=1, column=1, pady=8, padx=(0, 20))
+        
+        # 市区町村情報ラベル
+        self.city_info_label = ttk.Label(
+            search_frame,
+            text="※都道府県を選択してください",
+            font=('Yu Gothic UI', 9),
+            foreground='gray'
+        )
+        self.city_info_label.grid(row=2, column=0, columnspan=2, pady=(0, 5))
         
         # 検索件数セクション
         count_frame = ttk.LabelFrame(center_frame, text="検索件数", padding=FRAME_PADDING)
@@ -174,6 +182,14 @@ class UIManager:
             command=self.on_unlimited_changed
         )
         self.unlimited_check.grid(row=3, column=0, pady=(10, 5))
+        
+        # 1ページあたりの件数情報
+        ttk.Label(
+            count_frame,
+            text="※1ページあたり30件の店舗が表示されます",
+            font=('Yu Gothic UI', 9),
+            foreground='blue'
+        ).grid(row=4, column=0, pady=(5, 0))
         
         # 保存設定セクション
         save_frame = ttk.LabelFrame(center_frame, text="保存設定", padding=FRAME_PADDING)
@@ -412,10 +428,26 @@ class UIManager:
             self.count_entry.config(state='normal')
     
     def on_prefecture_changed(self, event):
-        """都道府県変更時の処理"""
+        """都道府県変更時の処理（全国対応）"""
         prefecture = self.prefecture_var.get()
         if prefecture:
             self.app.on_prefecture_changed(prefecture)
+            
+            # 全国選択時の処理
+            if prefecture == '全国':
+                self.city_combo.config(state='disabled')
+                self.city_info_label.config(text="※全国選択時は市区町村指定不可")
+                self.city_var.set('')
+            else:
+                cities = self.app.prefecture_mapper.get_cities(prefecture)
+                if cities:
+                    # リストに市区町村がある場合
+                    self.city_combo.config(state='readonly')
+                    self.city_info_label.config(text="※リストから選択可能")
+                else:
+                    # リストに市区町村がない場合は手動入力可能
+                    self.city_combo.config(state='normal')
+                    self.city_info_label.config(text="※手動で市区町村名を入力可能")
     
     def update_city_list(self, cities):
         """市区町村リスト更新"""
