@@ -1,6 +1,6 @@
 """
-UI管理クラス（シンプル版）
-中央寄せデザインで視認性を向上
+UI管理クラス（改良版）
+上寄せ配置で横幅をフルに活用
 おすすめエリア対応版
 """
 
@@ -44,32 +44,32 @@ class UIManager:
     
     def setup_ui(self):
         """UI構築"""
-        # ウィンドウサイズと位置を中央に設定
-        self.window.geometry("680x720")
+        # ウィンドウサイズ
+        self.window.geometry("620x780")
         
-        # 画面中央に配置
+        # 画面中央に配置（左右のみ）
         self.window.update_idletasks()
-        width = self.window.winfo_width()
-        height = self.window.winfo_height()
+        width = 620
+        height = 780
         x = (self.window.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.window.winfo_screenheight() // 2) - (height // 2)
+        y = 50  # 上から50pxの位置に配置
         self.window.geometry(f'{width}x{height}+{x}+{y}')
         
-        # メインフレーム
+        # メインフレーム（上寄せ、横幅フル）
         main_frame = ttk.Frame(self.window, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # タイトル（中央寄せ）
+        # タイトル（横幅中央）
         title_label = ttk.Label(
             main_frame,
             text="ぐるなび店舗情報取得ツール",
             font=('Yu Gothic UI', 16, 'bold')
         )
-        title_label.grid(row=0, column=0, pady=(10, 20))
+        title_label.pack(pady=(10, 20))
         
-        # タブ作成
+        # タブ作成（横幅フル）
         self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.notebook.pack(fill=tk.BOTH, expand=True)
         
         # 各タブ
         self.search_tab = ttk.Frame(self.notebook)
@@ -84,56 +84,39 @@ class UIManager:
         self.setup_search_tab()
         self.setup_settings_tab()
         self.setup_running_tab()
-        
-        # グリッド設定
-        self.window.columnconfigure(0, weight=1)
-        self.window.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(1, weight=1)
     
     def setup_search_tab(self):
         """検索タブ構築（エリア対応版）"""
-        # メインコンテナ
+        # メインコンテナ（上寄せ、横幅フル）
         container = ttk.Frame(self.search_tab, padding="20")
-        container.grid(row=0, column=0, sticky='nsew')
-        self.search_tab.columnconfigure(0, weight=1)
-        self.search_tab.rowconfigure(0, weight=1)
+        container.pack(fill=tk.BOTH, expand=True)
         
-        # 中央配置用のサブコンテナ
-        center_frame = ttk.Frame(container)
-        center_frame.grid(row=0, column=0)
-        container.grid_rowconfigure(0, weight=1)
-        container.grid_columnconfigure(0, weight=1)
+        # 検索条件セクション（横幅フル）
+        search_frame = ttk.LabelFrame(container, text="検索条件", padding="20")
+        search_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # 統一幅とパディング
-        FRAME_WIDTH = 420
-        FRAME_PADDING = 20
-        
-        # 検索条件セクション
-        search_frame = ttk.LabelFrame(center_frame, text="検索条件", padding=FRAME_PADDING)
-        search_frame.grid(row=0, column=0, pady=(0, 15), sticky='ew')
+        # グリッドの列設定
+        search_frame.columnconfigure(1, weight=1)  # 入力欄を伸縮可能に
         
         # 都道府県
-        ttk.Label(search_frame, text="都道府県:").grid(row=0, column=0, sticky='w', padx=(20, 10), pady=8)
+        ttk.Label(search_frame, text="都道府県:").grid(row=0, column=0, sticky='w', padx=(10, 10), pady=8)
         self.prefecture_combo = ttk.Combobox(
             search_frame,
             textvariable=self.prefecture_var,
-            width=28,
             state='readonly'
         )
         self.prefecture_combo['values'] = self.app.prefecture_mapper.get_prefectures()
-        self.prefecture_combo.grid(row=0, column=1, pady=8, padx=(0, 20))
+        self.prefecture_combo.grid(row=0, column=1, sticky='ew', pady=8, padx=(0, 20))
         self.prefecture_combo.bind('<<ComboboxSelected>>', self.on_prefecture_changed)
         
         # エリア（旧：市区町村）
-        ttk.Label(search_frame, text="エリア:").grid(row=1, column=0, sticky='w', padx=(20, 10), pady=8)
+        ttk.Label(search_frame, text="エリア:").grid(row=1, column=0, sticky='w', padx=(10, 10), pady=8)
         self.city_combo = ttk.Combobox(
             search_frame,
             textvariable=self.city_var,
-            width=28,
-            state='readonly'  # 読み取り専用に変更
+            state='readonly'
         )
-        self.city_combo.grid(row=1, column=1, pady=8, padx=(0, 20))
+        self.city_combo.grid(row=1, column=1, sticky='ew', pady=8, padx=(0, 20))
         
         # エリア情報ラベル
         self.city_info_label = ttk.Label(
@@ -144,13 +127,13 @@ class UIManager:
         )
         self.city_info_label.grid(row=2, column=0, columnspan=2, pady=(0, 5))
         
-        # 検索件数セクション
-        count_frame = ttk.LabelFrame(center_frame, text="検索件数", padding=FRAME_PADDING)
-        count_frame.grid(row=1, column=0, pady=(0, 15), sticky='ew')
+        # 検索件数セクション（横幅フル）
+        count_frame = ttk.LabelFrame(container, text="検索件数", padding="20")
+        count_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # 件数入力
+        # 件数入力（中央配置）
         input_frame = ttk.Frame(count_frame)
-        input_frame.grid(row=0, column=0, pady=(5, 10))
+        input_frame.pack(pady=(5, 10))
         
         ttk.Label(input_frame, text="取得件数:").pack(side=tk.LEFT, padx=(0, 10))
         self.count_entry = ttk.Entry(input_frame, textvariable=self.max_count_var, width=8)
@@ -158,32 +141,34 @@ class UIManager:
         self.count_entry.bind('<KeyRelease>', self.on_count_entry_changed)
         ttk.Label(input_frame, text="件").pack(side=tk.LEFT)
         
-        # スライダー
+        # スライダー（横幅フル）
+        slider_frame = ttk.Frame(count_frame)
+        slider_frame.pack(fill=tk.X, pady=(0, 5))
+        
         self.count_scale = ttk.Scale(
-            count_frame,
+            slider_frame,
             from_=1,
             to=5000,
             orient=tk.HORIZONTAL,
             variable=self.max_count_var,
-            length=350,
             command=self.update_count_from_slider
         )
-        self.count_scale.grid(row=1, column=0, pady=(0, 5))
+        self.count_scale.pack(fill=tk.X, padx=20)
         
         # 範囲表示
         range_frame = ttk.Frame(count_frame)
-        range_frame.grid(row=2, column=0)
+        range_frame.pack(fill=tk.X, padx=20)
         ttk.Label(range_frame, text="1", font=('Arial', 8)).pack(side=tk.LEFT)
-        ttk.Label(range_frame, text="5000", font=('Arial', 8)).pack(side=tk.LEFT, padx=(310, 0))
+        ttk.Label(range_frame, text="5000", font=('Arial', 8)).pack(side=tk.RIGHT)
         
-        # 全件取得
+        # 全件取得（中央配置）
         self.unlimited_check = ttk.Checkbutton(
             count_frame,
             text="全件取得",
             variable=self.unlimited_var,
             command=self.on_unlimited_changed
         )
-        self.unlimited_check.grid(row=3, column=0, pady=(10, 5))
+        self.unlimited_check.pack(pady=(10, 5))
         
         # 1ページあたりの件数情報
         ttk.Label(
@@ -191,27 +176,30 @@ class UIManager:
             text="※1ページあたり30件の店舗が表示されます",
             font=('Yu Gothic UI', 9),
             foreground='blue'
-        ).grid(row=4, column=0, pady=(5, 0))
+        ).pack(pady=(5, 0))
         
-        # 保存設定セクション
-        save_frame = ttk.LabelFrame(center_frame, text="保存設定", padding=FRAME_PADDING)
-        save_frame.grid(row=2, column=0, pady=(0, 15), sticky='ew')
+        # 保存設定セクション（横幅フル）
+        save_frame = ttk.LabelFrame(container, text="保存設定", padding="20")
+        save_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # グリッドの列設定
+        save_frame.columnconfigure(1, weight=1)  # 入力欄を伸縮可能に
         
         # 保存先
-        ttk.Label(save_frame, text="保存先:").grid(row=0, column=0, sticky='w', padx=(20, 10), pady=8)
-        path_entry = ttk.Entry(save_frame, textvariable=self.save_path_var, width=32)
-        path_entry.grid(row=0, column=1, pady=8, padx=(0, 5))
+        ttk.Label(save_frame, text="保存先:").grid(row=0, column=0, sticky='w', padx=(10, 10), pady=8)
+        path_entry = ttk.Entry(save_frame, textvariable=self.save_path_var)
+        path_entry.grid(row=0, column=1, sticky='ew', pady=8, padx=(0, 5))
         ttk.Button(save_frame, text="参照", command=self.browse_save_path, width=8).grid(row=0, column=2, pady=8, padx=(0, 20))
         
         # ファイル名
-        ttk.Label(save_frame, text="ファイル名:").grid(row=1, column=0, sticky='w', padx=(20, 10), pady=8)
-        file_entry = ttk.Entry(save_frame, textvariable=self.filename_var, width=32)
-        file_entry.grid(row=1, column=1, pady=8, padx=(0, 5))
+        ttk.Label(save_frame, text="ファイル名:").grid(row=1, column=0, sticky='w', padx=(10, 10), pady=8)
+        file_entry = ttk.Entry(save_frame, textvariable=self.filename_var)
+        file_entry.grid(row=1, column=1, sticky='ew', pady=8, padx=(0, 5))
         ttk.Button(save_frame, text="自動", command=self.auto_filename, width=8).grid(row=1, column=2, pady=8, padx=(0, 20))
         
-        # 実行ボタン
-        button_frame = ttk.Frame(center_frame)
-        button_frame.grid(row=3, column=0, pady=20)
+        # 実行ボタン（中央配置）
+        button_frame = ttk.Frame(container)
+        button_frame.pack(pady=20)
         
         self.start_button = ttk.Button(
             button_frame,
@@ -227,27 +215,20 @@ class UIManager:
     
     def setup_settings_tab(self):
         """設定タブ構築"""
-        # メインコンテナ
+        # メインコンテナ（上寄せ、横幅フル）
         container = ttk.Frame(self.settings_tab, padding="20")
-        container.grid(row=0, column=0, sticky='nsew')
-        self.settings_tab.columnconfigure(0, weight=1)
-        self.settings_tab.rowconfigure(0, weight=1)
+        container.pack(fill=tk.BOTH, expand=True)
         
-        # 中央配置用のサブコンテナ
-        center_frame = ttk.Frame(container)
-        center_frame.grid(row=0, column=0)
-        container.grid_rowconfigure(0, weight=1)
-        container.grid_columnconfigure(0, weight=1)
+        # アクセスクールタイムセクション（横幅フル）
+        cooltime_frame = ttk.LabelFrame(container, text="アクセスクールタイム", padding="20")
+        cooltime_frame.pack(fill=tk.X, pady=(0, 20))
         
-        FRAME_PADDING = 20
-        
-        # アクセスクールタイムセクション
-        cooltime_frame = ttk.LabelFrame(center_frame, text="アクセスクールタイム", padding=FRAME_PADDING)
-        cooltime_frame.grid(row=0, column=0, pady=(0, 20), padx=20, sticky='ew')
+        # グリッドの列設定
+        cooltime_frame.columnconfigure(0, weight=1)
         
         # 最小値
         min_frame = ttk.Frame(cooltime_frame)
-        min_frame.grid(row=0, column=0, pady=8)
+        min_frame.pack(pady=8)
         ttk.Label(min_frame, text="最小値（秒）:", width=18).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Spinbox(
             min_frame,
@@ -260,7 +241,7 @@ class UIManager:
         
         # 最大値
         max_frame = ttk.Frame(cooltime_frame)
-        max_frame.grid(row=1, column=0, pady=8)
+        max_frame.pack(pady=8)
         ttk.Label(max_frame, text="最大値（秒）:", width=18).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Spinbox(
             max_frame,
@@ -276,14 +257,14 @@ class UIManager:
             text="※推奨: 最小2秒、最大4秒",
             font=('Yu Gothic UI', 9),
             foreground='blue'
-        ).grid(row=2, column=0, pady=(10, 0))
+        ).pack(pady=(10, 0))
         
-        # User-Agent切り替えセクション
-        ua_frame = ttk.LabelFrame(center_frame, text="User-Agent切り替え", padding=FRAME_PADDING)
-        ua_frame.grid(row=1, column=0, pady=(0, 20), padx=20, sticky='ew')
+        # User-Agent切り替えセクション（横幅フル）
+        ua_frame = ttk.LabelFrame(container, text="User-Agent切り替え", padding="20")
+        ua_frame.pack(fill=tk.X, pady=(0, 20))
         
         ua_input_frame = ttk.Frame(ua_frame)
-        ua_input_frame.grid(row=0, column=0, pady=8)
+        ua_input_frame.pack(pady=8)
         ttk.Label(ua_input_frame, text="切り替え間隔（店舗数）:", width=22).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Spinbox(
             ua_input_frame,
@@ -299,11 +280,11 @@ class UIManager:
             text="※推奨: 15店舗ごと",
             font=('Yu Gothic UI', 9),
             foreground='blue'
-        ).grid(row=1, column=0, pady=(10, 0))
+        ).pack(pady=(10, 0))
         
-        # ChromeDriverセクション
-        driver_frame = ttk.LabelFrame(center_frame, text="ChromeDriver", padding=FRAME_PADDING)
-        driver_frame.grid(row=2, column=0, padx=20, sticky='ew')
+        # ChromeDriverセクション（横幅フル）
+        driver_frame = ttk.LabelFrame(container, text="ChromeDriver", padding="20")
+        driver_frame.pack(fill=tk.X)
         
         ttk.Button(
             driver_frame,
@@ -318,24 +299,19 @@ class UIManager:
             font=('Yu Gothic UI', 9),
             foreground='gray'
         ).pack()
+        
+        # 余白スペース（残りの空間を埋める）
+        ttk.Frame(container).pack(fill=tk.BOTH, expand=True)
     
     def setup_running_tab(self):
         """実行中タブ構築"""
-        # メインコンテナ
+        # メインコンテナ（上寄せ、横幅フル）
         container = ttk.Frame(self.running_tab, padding="20")
-        container.grid(row=0, column=0, sticky='nsew')
-        self.running_tab.columnconfigure(0, weight=1)
-        self.running_tab.rowconfigure(0, weight=1)
+        container.pack(fill=tk.BOTH, expand=True)
         
-        # 中央配置用のサブコンテナ
-        center_frame = ttk.Frame(container)
-        center_frame.grid(row=0, column=0)
-        container.grid_rowconfigure(0, weight=1)
-        container.grid_columnconfigure(0, weight=1)
-        
-        # ステータス表示
-        status_frame = ttk.LabelFrame(center_frame, text="実行状況", padding="30")
-        status_frame.grid(row=0, column=0, pady=(0, 20), sticky='ew')
+        # ステータス表示（横幅フル）
+        status_frame = ttk.LabelFrame(container, text="実行状況", padding="30")
+        status_frame.pack(fill=tk.X, pady=(0, 20))
         
         # ステータステキスト
         self.status_label = ttk.Label(
@@ -343,16 +319,18 @@ class UIManager:
             textvariable=self.status_var,
             font=('Yu Gothic UI', 12)
         )
-        self.status_label.grid(row=0, column=0, pady=(0, 15))
+        self.status_label.pack(pady=(0, 15))
         
-        # プログレスバー
+        # プログレスバー（横幅フル）
+        progress_container = ttk.Frame(status_frame)
+        progress_container.pack(fill=tk.X, padx=20, pady=10)
+        
         self.progress_bar = ttk.Progressbar(
-            status_frame,
+            progress_container,
             variable=self.progress_var,
-            maximum=100,
-            length=450
+            maximum=100
         )
-        self.progress_bar.grid(row=1, column=0, pady=10)
+        self.progress_bar.pack(fill=tk.X)
         
         # プログレステキスト
         self.progress_label = ttk.Label(
@@ -360,7 +338,7 @@ class UIManager:
             text="0 / 0 件",
             font=('Yu Gothic UI', 10)
         )
-        self.progress_label.grid(row=2, column=0, pady=(5, 15))
+        self.progress_label.pack(pady=(5, 15))
         
         # 経過時間
         self.elapsed_label = ttk.Label(
@@ -368,38 +346,39 @@ class UIManager:
             textvariable=self.elapsed_var,
             font=('Yu Gothic UI', 11)
         )
-        self.elapsed_label.grid(row=3, column=0, pady=5)
+        self.elapsed_label.pack(pady=5)
         
-        # ログ表示
-        log_frame = ttk.LabelFrame(center_frame, text="処理ログ", padding="20")
-        log_frame.grid(row=1, column=0, pady=(0, 20), sticky='ew')
+        # ログ表示（横幅フル、高さ拡張）
+        log_frame = ttk.LabelFrame(container, text="処理ログ", padding="20")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
         
-        # ログテキスト
+        # ログテキスト（横幅フル、高さ拡張）
         log_container = ttk.Frame(log_frame)
-        log_container.grid(row=0, column=0)
+        log_container.pack(fill=tk.BOTH, expand=True)
         
         self.log_text = tk.Text(
             log_container, 
-            height=10, 
-            width=60, 
             wrap=tk.WORD,
             font=('Consolas', 9)
         )
-        self.log_text.grid(row=0, column=0)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # スクロールバー
         scrollbar = ttk.Scrollbar(log_container, orient=tk.VERTICAL, command=self.log_text.yview)
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
-        # 制御ボタン
+        # 制御ボタン（中央配置）
+        button_frame = ttk.Frame(container)
+        button_frame.pack(pady=10)
+        
         self.stop_button = ttk.Button(
-            center_frame,
+            button_frame,
             text="強制停止",
             command=self.app.stop_scraping,
             width=15
         )
-        self.stop_button.grid(row=2, column=0, pady=10)
+        self.stop_button.pack()
     
     def on_count_entry_changed(self, event):
         """手入力時の処理"""
