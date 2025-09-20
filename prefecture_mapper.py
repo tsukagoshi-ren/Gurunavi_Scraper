@@ -6,13 +6,14 @@
 from urllib.parse import urlencode
 
 class PrefectureMapper:
-    """都道府県・市区町村マッピングクラス"""
+    """都道府県・市区町村マッピングクラス（全国対応版）"""
     
     def __init__(self):
         self.base_url = "https://r.gnavi.co.jp"
         
-        # 都道府県コードマッピング
+        # 都道府県コードマッピング（全国を追加）
         self.prefecture_codes = {
+            '全国': 'jp',  # 全国を追加
             '北海道': 'hokkaido',
             '青森県': 'aomori',
             '岩手県': 'iwate',
@@ -175,8 +176,9 @@ class PrefectureMapper:
             '福岡市早良区': 'CWTAV8170000',
         }
         
-        # 都道府県別の市区町村リスト
+        # 都道府県別の市区町村リスト（全国の場合は空）
         self.prefecture_cities = {
+            '全国': [],  # 全国の場合は市区町村選択なし
             '北海道': ['札幌市中央区', '札幌市北区', '札幌市東区', '札幌市白石区', 
                      '札幌市豊平区', '札幌市南区', '札幌市西区', '札幌市厚別区',
                      '札幌市手稲区', '札幌市清田区'],
@@ -202,46 +204,96 @@ class PrefectureMapper:
             '福岡県': ['福岡市東区', '福岡市博多区', '福岡市中央区', '福岡市南区',
                      '福岡市西区', '福岡市城南区', '福岡市早良区']
         }
+        
+        # 他の都道府県にも空リストを設定
+        for prefecture in self.prefecture_codes.keys():
+            if prefecture not in self.prefecture_cities:
+                self.prefecture_cities[prefecture] = []
     
     def get_prefectures(self):
-        """都道府県リスト取得"""
+        """都道府県リスト取得（全国を含む）"""
         return list(self.prefecture_codes.keys())
     
     def get_cities(self, prefecture):
         """指定都道府県の市区町村リスト取得"""
         return self.prefecture_cities.get(prefecture, [])
     
-    def generate_search_url(self, prefecture, city=None):
-        """検索URL生成"""
+    def generate_search_url(self, prefecture, city=None, page=1):
+        """
+        検索URL生成（ページネーション対応）
+        
+        Args:
+            prefecture (str): 都道府県名（「全国」を含む）
+            city (str): 市区町村名（オプション）
+            page (int): ページ番号（デフォルト: 1）
+            
+        Returns:
+            str: 生成されたURL
+        """
         if prefecture not in self.prefecture_codes:
             raise ValueError(f"未対応の都道府県: {prefecture}")
         
         pref_code = self.prefecture_codes[prefecture]
         
+        # URLの基本部分を構築
         if city and city in self.city_codes:
-            # 市区町村コードがある場合
+            # 市区町村が指定されている場合
             city_code = self.city_codes[city]
-            return f"{self.base_url}/city/{city_code}/rs/"
-        elif city:
-            # 市区町村コードがない場合はフリーワード検索
-            params = {'fwp': city}
-            query_string = urlencode(params)
-            return f"{self.base_url}/area/{pref_code}/rs/?{query_string}"
+            base_url = f"{self.base_url}/city/{city_code}/rs/"
         else:
-            # 都道府県のみ
-            return f"{self.base_url}/area/{pref_code}/rs/"
+            # 都道府県のみ、または全国の場合
+            base_url = f"{self.base_url}/area/{pref_code}/rs/"
+        
+        # ページ番号が2以上の場合はパラメータを追加
+        if page > 1:
+            url = f"{base_url}?p={page}"
+        else:
+            url = base_url
+        
+        # 市区町村名が指定されているがコードがない場合はフリーワード検索
+        if city and city not in self.city_codes:
+            params = {'fwp': city}
+            if page > 1:
+                params['p'] = page
+            query_string = urlencode(params)
+            url = f"{self.base_url}/area/{pref_code}/rs/?{query_string}"
+        
+        return url
+    
+    def generate_next_page_url(self, current_url, next_page):
+        """
+        現在のURLから次のページのURLを生成
+        
+        Args:
+            current_url (str): 現在のURL
+            next_page (int): 次のページ番号
+            
+        Returns:
+            str: 次ページのURL
+        """
+        # URLからクエリパラメータを除去
+        base_url = current_url.split('?')[0]
+        
+        # rs/で終わっていない場合は追加
+        if not base_url.endswith('/rs/'):
+            if '/rs' in base_url:
+                base_url = base_url.replace('/rs', '/rs/')
+            else:
+                base_url = base_url.rstrip('/') + '/rs/'
+        
+        # ページパラメータを追加
+        if next_page > 1:
+            return f"{base_url}?p={next_page}"
+        else:
+            return base_url
     
     def parse_url_components(self, url):
         """URLから都道府県・市区町村情報を抽出"""
         import re
         
-        # 都道府県コード抽出
-        pref_match = re.search(r'/area/([a-z]+)/', url)
-        if pref_match:
-            pref_code = pref_match.group(1)
-            for pref, code in self.prefecture_codes.items():
-                if code == pref_code:
-                    return {'prefecture': pref, 'city': None}
+        # 全国の場合
+        if '/area/jp/' in url:
+            return {'prefecture': '全国', 'city': None}
         
         # 市区町村コード抽出
         city_match = re.search(r'/city/([A-Z0-9]+)/', url)
@@ -254,7 +306,25 @@ class PrefectureMapper:
                         if city in cities:
                             return {'prefecture': pref, 'city': city}
         
+        # 都道府県コード抽出
+        pref_match = re.search(r'/area/([a-z]+)/', url)
+        if pref_match:
+            pref_code = pref_match.group(1)
+            for pref, code in self.prefecture_codes.items():
+                if code == pref_code:
+                    return {'prefecture': pref, 'city': None}
+        
         return {'prefecture': None, 'city': None}
+    
+    def extract_page_number(self, url):
+        """URLからページ番号を抽出"""
+        import re
+        
+        # ?p=2 のようなパラメータからページ番号を抽出
+        page_match = re.search(r'[?&]p=(\d+)', url)
+        if page_match:
+            return int(page_match.group(1))
+        return 1
     
     def is_valid_prefecture(self, prefecture):
         """都道府県の有効性チェック"""
@@ -264,3 +334,12 @@ class PrefectureMapper:
         """市区町村の有効性チェック"""
         cities = self.get_cities(prefecture)
         return city in cities
+    
+    def get_area_display_name(self, prefecture, city=None):
+        """表示用のエリア名を取得"""
+        if prefecture == '全国':
+            return '全国'
+        elif city:
+            return f"{prefecture} {city}"
+        else:
+            return prefecture

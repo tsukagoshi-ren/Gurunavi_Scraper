@@ -1,6 +1,6 @@
 """
-UI管理クラス（現実的処理時間対応版）
-タブ式インターフェースの構築と管理
+UI管理クラス（シンプル版）
+中央寄せデザインで視認性を向上
 """
 
 import tkinter as tk
@@ -35,27 +35,36 @@ class UIManager:
         self.status_var = tk.StringVar(value="待機中")
         self.elapsed_var = tk.StringVar(value="経過時間: 0秒")
         
-        # 処理時間予測用
-        self.time_prediction_var = tk.StringVar(value="時間帯と件数を設定してください")
-        
         # タイマー用
         self.start_time = None
         self.timer_running = False
-        self.last_stats_update = 0
+        self.total_stores = 0
+        self.current_store = 0
     
     def setup_ui(self):
         """UI構築"""
+        # ウィンドウサイズと位置を中央に設定
+        self.window.geometry("680x720")
+        
+        # 画面中央に配置
+        self.window.update_idletasks()
+        width = self.window.winfo_width()
+        height = self.window.winfo_height()
+        x = (self.window.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.window.winfo_screenheight() // 2) - (height // 2)
+        self.window.geometry(f'{width}x{height}+{x}+{y}')
+        
         # メインフレーム
         main_frame = ttk.Frame(self.window, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # タイトル
+        # タイトル（中央寄せ）
         title_label = ttk.Label(
             main_frame,
             text="ぐるなび店舗情報取得ツール",
-            font=('Arial', 14, 'bold')
+            font=('Yu Gothic UI', 16, 'bold')
         )
-        title_label.grid(row=0, column=0, pady=(0, 10))
+        title_label.grid(row=0, column=0, pady=(10, 20))
         
         # タブ作成
         self.notebook = ttk.Notebook(main_frame)
@@ -66,17 +75,14 @@ class UIManager:
         self.settings_tab = ttk.Frame(self.notebook)
         self.running_tab = ttk.Frame(self.notebook)
         
-        self.notebook.add(self.search_tab, text="検索")
-        self.notebook.add(self.settings_tab, text="設定")
-        self.notebook.add(self.running_tab, text="実行中")
+        self.notebook.add(self.search_tab, text="　　検索　　")
+        self.notebook.add(self.settings_tab, text="　　設定　　")
+        self.notebook.add(self.running_tab, text="　実行中　")
         
         # タブ内容構築
         self.setup_search_tab()
         self.setup_settings_tab()
         self.setup_running_tab()
-        
-        # 処理時間予測の初期化
-        self.initialize_time_prediction()
         
         # グリッド設定
         self.window.columnconfigure(0, weight=1)
@@ -86,158 +92,108 @@ class UIManager:
     
     def setup_search_tab(self):
         """検索タブ構築"""
-        # パディング用フレーム
-        content_frame = ttk.Frame(self.search_tab, padding="20")
-        content_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # メインコンテナ
+        container = ttk.Frame(self.search_tab, padding="20")
+        container.grid(row=0, column=0, sticky='nsew')
+        self.search_tab.columnconfigure(0, weight=1)
+        self.search_tab.rowconfigure(0, weight=1)
+        
+        # 中央配置用のサブコンテナ
+        center_frame = ttk.Frame(container)
+        center_frame.grid(row=0, column=0)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+        
+        # 統一幅とパディング
+        FRAME_WIDTH = 420
+        FRAME_PADDING = 20
         
         # 検索条件セクション
-        search_frame = ttk.LabelFrame(content_frame, text="検索条件", padding="15")
-        search_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        search_frame = ttk.LabelFrame(center_frame, text="検索条件", padding=FRAME_PADDING)
+        search_frame.grid(row=0, column=0, pady=(0, 15), sticky='ew')
         
         # 都道府県
-        ttk.Label(search_frame, text="都道府県:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        ttk.Label(search_frame, text="都道府県:").grid(row=0, column=0, sticky='w', padx=(20, 10), pady=8)
         self.prefecture_combo = ttk.Combobox(
             search_frame,
             textvariable=self.prefecture_var,
-            width=20,
+            width=28,
             state='readonly'
         )
         self.prefecture_combo['values'] = self.app.prefecture_mapper.get_prefectures()
-        self.prefecture_combo.grid(row=0, column=1, pady=5)
+        self.prefecture_combo.grid(row=0, column=1, pady=8, padx=(0, 20))
         self.prefecture_combo.bind('<<ComboboxSelected>>', self.on_prefecture_changed)
         
         # 市区町村
-        ttk.Label(search_frame, text="市区町村:").grid(row=1, column=0, sticky=tk.W, padx=(0, 10))
+        ttk.Label(search_frame, text="市区町村:").grid(row=1, column=0, sticky='w', padx=(20, 10), pady=8)
         self.city_combo = ttk.Combobox(
             search_frame,
             textvariable=self.city_var,
-            width=20,
+            width=28,
             state='readonly'
         )
-        self.city_combo.grid(row=1, column=1, pady=5)
+        self.city_combo.grid(row=1, column=1, pady=8, padx=(0, 20))
         
         # 検索件数セクション
-        count_frame = ttk.LabelFrame(content_frame, text="検索件数", padding="15")
-        count_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        count_frame = ttk.LabelFrame(center_frame, text="検索件数", padding=FRAME_PADDING)
+        count_frame.grid(row=1, column=0, pady=(0, 15), sticky='ew')
         
-        # 件数スライダー
-        ttk.Label(count_frame, text="取得件数:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        # 件数入力
+        input_frame = ttk.Frame(count_frame)
+        input_frame.grid(row=0, column=0, pady=(5, 10))
+        
+        ttk.Label(input_frame, text="取得件数:").pack(side=tk.LEFT, padx=(0, 10))
+        self.count_entry = ttk.Entry(input_frame, textvariable=self.max_count_var, width=8)
+        self.count_entry.pack(side=tk.LEFT, padx=(0, 5))
+        self.count_entry.bind('<KeyRelease>', self.on_count_entry_changed)
+        ttk.Label(input_frame, text="件").pack(side=tk.LEFT)
+        
+        # スライダー
         self.count_scale = ttk.Scale(
             count_frame,
             from_=1,
-            to=1000,
+            to=5000,
             orient=tk.HORIZONTAL,
             variable=self.max_count_var,
-            length=300,
-            command=self.update_count_label
+            length=350,
+            command=self.update_count_from_slider
         )
-        self.count_scale.grid(row=0, column=1, pady=5)
+        self.count_scale.grid(row=1, column=0, pady=(0, 5))
         
-        self.count_label = ttk.Label(count_frame, text="30件")
-        self.count_label.grid(row=0, column=2, padx=(10, 0))
+        # 範囲表示
+        range_frame = ttk.Frame(count_frame)
+        range_frame.grid(row=2, column=0)
+        ttk.Label(range_frame, text="1", font=('Arial', 8)).pack(side=tk.LEFT)
+        ttk.Label(range_frame, text="5000", font=('Arial', 8)).pack(side=tk.LEFT, padx=(310, 0))
         
-        # 無制限チェックボックス
+        # 全件取得
         self.unlimited_check = ttk.Checkbutton(
             count_frame,
-            text="無制限（全件取得）",
+            text="全件取得",
             variable=self.unlimited_var,
             command=self.on_unlimited_changed
         )
-        self.unlimited_check.grid(row=1, column=1, pady=(10, 0))
-        
-        # 列幅を固定
-        count_frame.columnconfigure(0, weight=0, minsize=80)
-        count_frame.columnconfigure(1, weight=0, minsize=300)
-        count_frame.columnconfigure(2, weight=0, minsize=80)
+        self.unlimited_check.grid(row=3, column=0, pady=(10, 5))
         
         # 保存設定セクション
-        save_frame = ttk.LabelFrame(content_frame, text="保存設定", padding="15")
-        save_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        save_frame = ttk.LabelFrame(center_frame, text="保存設定", padding=FRAME_PADDING)
+        save_frame.grid(row=2, column=0, pady=(0, 15), sticky='ew')
         
         # 保存先
-        ttk.Label(save_frame, text="保存先:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        ttk.Entry(
-            save_frame,
-            textvariable=self.save_path_var,
-            width=40
-        ).grid(row=0, column=1, pady=5)
-        ttk.Button(
-            save_frame,
-            text="参照",
-            command=self.browse_save_path
-        ).grid(row=0, column=2, padx=(5, 0))
+        ttk.Label(save_frame, text="保存先:").grid(row=0, column=0, sticky='w', padx=(20, 10), pady=8)
+        path_entry = ttk.Entry(save_frame, textvariable=self.save_path_var, width=32)
+        path_entry.grid(row=0, column=1, pady=8, padx=(0, 5))
+        ttk.Button(save_frame, text="参照", command=self.browse_save_path, width=8).grid(row=0, column=2, pady=8, padx=(0, 20))
         
         # ファイル名
-        ttk.Label(save_frame, text="ファイル名:").grid(row=1, column=0, sticky=tk.W, padx=(0, 10))
-        ttk.Entry(
-            save_frame,
-            textvariable=self.filename_var,
-            width=40
-        ).grid(row=1, column=1, pady=5)
-        ttk.Button(
-            save_frame,
-            text="自動",
-            command=self.auto_filename
-        ).grid(row=1, column=2, padx=(5, 0))
-        
-        # 検索オプションセクション
-        option_frame = ttk.LabelFrame(content_frame, text="取得オプション", padding="15")
-        option_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
-        
-        # URL取得のみチェックボックス
-        self.url_only_var = tk.BooleanVar(value=False)
-        self.url_only_check = ttk.Checkbutton(
-            option_frame,
-            text="店舗URLのみ取得（詳細情報は取得しない）",
-            variable=self.url_only_var
-        )
-        self.url_only_check.grid(row=0, column=0, sticky=tk.W, pady=5)
-        
-        ttk.Label(
-            option_frame,
-            text="※URLのみ取得する場合、処理時間が大幅に短縮されます",
-            font=('Arial', 9),
-            foreground='gray'
-        ).grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
-        
-        # 処理時間予測セクション
-        prediction_frame = ttk.LabelFrame(content_frame, text="処理時間予測", padding="15")
-        prediction_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
-        
-        # 予測時間表示
-        prediction_label = ttk.Label(
-            prediction_frame, 
-            textvariable=self.time_prediction_var,
-            font=('Arial', 10),
-            foreground='blue'
-        )
-        prediction_label.grid(row=0, column=0, pady=5)
-        
-        # 時間帯情報表示
-        self.time_zone_var = tk.StringVar()
-        time_zone_label = ttk.Label(
-            prediction_frame,
-            textvariable=self.time_zone_var,
-            font=('Arial', 9)
-        )
-        time_zone_label.grid(row=1, column=0, pady=5)
-        
-        # 推奨時間帯の案内
-        recommendation_text = (
-            "推奨実行時間: 深夜23:00～早朝6:00\n"
-            "注意時間帯: 昼食(12-13時)、夕食(18-20時)"
-        )
-        recommendation_label = ttk.Label(
-            prediction_frame,
-            text=recommendation_text,
-            font=('Arial', 8),
-            foreground='gray'
-        )
-        recommendation_label.grid(row=2, column=0, pady=(10, 0))
+        ttk.Label(save_frame, text="ファイル名:").grid(row=1, column=0, sticky='w', padx=(20, 10), pady=8)
+        file_entry = ttk.Entry(save_frame, textvariable=self.filename_var, width=32)
+        file_entry.grid(row=1, column=1, pady=8, padx=(0, 5))
+        ttk.Button(save_frame, text="自動", command=self.auto_filename, width=8).grid(row=1, column=2, pady=8, padx=(0, 20))
         
         # 実行ボタン
-        button_frame = ttk.Frame(content_frame)
-        button_frame.grid(row=5, column=0, pady=20)
+        button_frame = ttk.Frame(center_frame)
+        button_frame.grid(row=3, column=0, pady=20)
         
         self.start_button = ttk.Button(
             button_frame,
@@ -249,287 +205,222 @@ class UIManager:
         
         # スタイル設定
         style = ttk.Style()
-        style.configure('Accent.TButton', font=('Arial', 11, 'bold'))
-        
-        # グリッド設定
-        content_frame.columnconfigure(0, weight=1)
-        search_frame.columnconfigure(1, weight=1)
-        count_frame.columnconfigure(1, weight=1)
-        save_frame.columnconfigure(1, weight=1)
+        style.configure('Accent.TButton', font=('Yu Gothic UI', 12, 'bold'))
     
     def setup_settings_tab(self):
         """設定タブ構築"""
-        # パディング用フレーム
-        content_frame = ttk.Frame(self.settings_tab, padding="20")
-        content_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # メインコンテナ
+        container = ttk.Frame(self.settings_tab, padding="20")
+        container.grid(row=0, column=0, sticky='nsew')
+        self.settings_tab.columnconfigure(0, weight=1)
+        self.settings_tab.rowconfigure(0, weight=1)
+        
+        # 中央配置用のサブコンテナ
+        center_frame = ttk.Frame(container)
+        center_frame.grid(row=0, column=0)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+        
+        FRAME_PADDING = 20
         
         # アクセスクールタイムセクション
-        cooltime_frame = ttk.LabelFrame(content_frame, text="アクセスクールタイム", padding="15")
-        cooltime_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        cooltime_frame = ttk.LabelFrame(center_frame, text="アクセスクールタイム", padding=FRAME_PADDING)
+        cooltime_frame.grid(row=0, column=0, pady=(0, 20), padx=20, sticky='ew')
         
-        ttk.Label(cooltime_frame, text="最小値（秒）:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        # 最小値
+        min_frame = ttk.Frame(cooltime_frame)
+        min_frame.grid(row=0, column=0, pady=8)
+        ttk.Label(min_frame, text="最小値（秒）:", width=18).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Spinbox(
-            cooltime_frame,
+            min_frame,
             from_=1.0,
             to=10.0,
             increment=0.5,
             textvariable=self.cooltime_min_var,
-            width=10
-        ).grid(row=0, column=1, pady=5)
+            width=15
+        ).pack(side=tk.LEFT)
         
-        ttk.Label(cooltime_frame, text="最大値（秒）:").grid(row=1, column=0, sticky=tk.W, padx=(0, 10))
+        # 最大値
+        max_frame = ttk.Frame(cooltime_frame)
+        max_frame.grid(row=1, column=0, pady=8)
+        ttk.Label(max_frame, text="最大値（秒）:", width=18).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Spinbox(
-            cooltime_frame,
+            max_frame,
             from_=2.0,
             to=20.0,
             increment=0.5,
             textvariable=self.cooltime_max_var,
-            width=10
-        ).grid(row=1, column=1, pady=5)
+            width=15
+        ).pack(side=tk.LEFT)
         
         ttk.Label(
             cooltime_frame,
-            text="※現実的な設定: 最小2秒、最大4秒を推奨\n※アクセス制限回避のため十分な間隔を設定してください",
-            font=('Arial', 9),
+            text="※推奨: 最小2秒、最大4秒",
+            font=('Yu Gothic UI', 9),
             foreground='blue'
-        ).grid(row=2, column=0, columnspan=2, pady=(10, 0))
+        ).grid(row=2, column=0, pady=(10, 0))
         
         # User-Agent切り替えセクション
-        ua_frame = ttk.LabelFrame(content_frame, text="User-Agent切り替え", padding="15")
-        ua_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        ua_frame = ttk.LabelFrame(center_frame, text="User-Agent切り替え", padding=FRAME_PADDING)
+        ua_frame.grid(row=1, column=0, pady=(0, 20), padx=20, sticky='ew')
         
-        ttk.Label(ua_frame, text="切り替え間隔（アクセス数）:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        ua_input_frame = ttk.Frame(ua_frame)
+        ua_input_frame.grid(row=0, column=0, pady=8)
+        ttk.Label(ua_input_frame, text="切り替え間隔（店舗数）:", width=22).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Spinbox(
-            ua_frame,
+            ua_input_frame,
             from_=5,
             to=50,
             increment=5,
             textvariable=self.ua_switch_var,
-            width=10
-        ).grid(row=0, column=1, pady=5)
+            width=15
+        ).pack(side=tk.LEFT)
         
         ttk.Label(
             ua_frame,
-            text="※現実的な設定: 15店舗ごとの切り替えを推奨\n※頻繁な切り替えでアクセス制限を回避します",
-            font=('Arial', 9),
+            text="※推奨: 15店舗ごと",
+            font=('Yu Gothic UI', 9),
             foreground='blue'
-        ).grid(row=1, column=0, columnspan=2, pady=(10, 0))
+        ).grid(row=1, column=0, pady=(10, 0))
         
         # ChromeDriverセクション
-        driver_frame = ttk.LabelFrame(content_frame, text="ChromeDriver", padding="15")
-        driver_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        driver_frame = ttk.LabelFrame(center_frame, text="ChromeDriver", padding=FRAME_PADDING)
+        driver_frame.grid(row=2, column=0, padx=20, sticky='ew')
         
         ttk.Button(
             driver_frame,
             text="ChromeDriver修正",
-            command=self.fix_chromedriver
-        ).grid(row=0, column=0, pady=5)
+            command=self.fix_chromedriver,
+            width=20
+        ).pack(pady=10)
         
         ttk.Label(
             driver_frame,
-            text="※ChromeDriverに問題がある場合に実行してください",
-            font=('Arial', 9),
+            text="※問題がある場合に実行してください",
+            font=('Yu Gothic UI', 9),
             foreground='gray'
-        ).grid(row=1, column=0, pady=(5, 0))
-        
-        # 処理時間情報セクション
-        info_frame = ttk.LabelFrame(content_frame, text="処理時間について", padding="15")
-        info_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
-        
-        info_text = (
-            "現実的な処理時間:\n"
-            "• 1店舗あたり約7-10秒（時間帯により変動）\n"
-            "• 深夜時間帯: 約7秒/店舗（最速）\n"
-            "• 通常時間帯: 約8秒/店舗\n"
-            "• 昼食・夕食時間帯: 約10-12秒/店舗（最遅）\n\n"
-            "100店舗の場合の予想処理時間:\n"
-            "• 深夜時間帯: 約12分\n"
-            "• 通常時間帯: 約14分\n"
-            "• 繁忙時間帯: 約18分"
-        )
-        
-        ttk.Label(
-            info_frame,
-            text=info_text,
-            font=('Arial', 9),
-            foreground='darkgreen'
-        ).grid(row=0, column=0, pady=5)
-        
-        # グリッド設定
-        content_frame.columnconfigure(0, weight=1)
+        ).pack()
     
     def setup_running_tab(self):
         """実行中タブ構築"""
-        # パディング用フレーム
-        content_frame = ttk.Frame(self.running_tab, padding="20")
-        content_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # メインコンテナ
+        container = ttk.Frame(self.running_tab, padding="20")
+        container.grid(row=0, column=0, sticky='nsew')
+        self.running_tab.columnconfigure(0, weight=1)
+        self.running_tab.rowconfigure(0, weight=1)
+        
+        # 中央配置用のサブコンテナ
+        center_frame = ttk.Frame(container)
+        center_frame.grid(row=0, column=0)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
         
         # ステータス表示
-        status_frame = ttk.LabelFrame(content_frame, text="実行状況", padding="15")
-        status_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        status_frame = ttk.LabelFrame(center_frame, text="実行状況", padding="30")
+        status_frame.grid(row=0, column=0, pady=(0, 20), sticky='ew')
         
         # ステータステキスト
         self.status_label = ttk.Label(
             status_frame,
             textvariable=self.status_var,
-            font=('Arial', 11)
+            font=('Yu Gothic UI', 12)
         )
-        self.status_label.grid(row=0, column=0, pady=5)
+        self.status_label.grid(row=0, column=0, pady=(0, 15))
         
         # プログレスバー
         self.progress_bar = ttk.Progressbar(
             status_frame,
             variable=self.progress_var,
             maximum=100,
-            length=400
+            length=450
         )
         self.progress_bar.grid(row=1, column=0, pady=10)
         
         # プログレステキスト
-        self.progress_label = ttk.Label(status_frame, text="0%")
-        self.progress_label.grid(row=2, column=0, pady=5)
+        self.progress_label = ttk.Label(
+            status_frame, 
+            text="0 / 0 件",
+            font=('Yu Gothic UI', 10)
+        )
+        self.progress_label.grid(row=2, column=0, pady=(5, 15))
         
         # 経過時間
         self.elapsed_label = ttk.Label(
             status_frame,
             textvariable=self.elapsed_var,
-            font=('Arial', 10)
+            font=('Yu Gothic UI', 11)
         )
         self.elapsed_label.grid(row=3, column=0, pady=5)
         
-        # 詳細ログ
-        log_frame = ttk.LabelFrame(content_frame, text="処理ログ", padding="15")
-        log_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 15))
+        # ログ表示
+        log_frame = ttk.LabelFrame(center_frame, text="処理ログ", padding="20")
+        log_frame.grid(row=1, column=0, pady=(0, 20), sticky='ew')
         
         # ログテキスト
-        self.log_text = tk.Text(log_frame, height=8, width=60, wrap=tk.WORD)
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        log_container = ttk.Frame(log_frame)
+        log_container.grid(row=0, column=0)
+        
+        self.log_text = tk.Text(
+            log_container, 
+            height=10, 
+            width=60, 
+            wrap=tk.WORD,
+            font=('Consolas', 9)
+        )
+        self.log_text.grid(row=0, column=0)
         
         # スクロールバー
-        scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        scrollbar = ttk.Scrollbar(log_container, orient=tk.VERTICAL, command=self.log_text.yview)
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
-        # 統計情報表示
-        stats_frame = ttk.LabelFrame(content_frame, text="詳細統計", padding="15")
-        stats_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
-        
-        # 統計情報表示用テキスト
-        self.stats_text = tk.Text(stats_frame, height=6, width=60, wrap=tk.WORD)
-        self.stats_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
-        
-        # 統計用スクロールバー
-        stats_scrollbar = ttk.Scrollbar(stats_frame, orient=tk.VERTICAL, command=self.stats_text.yview)
-        stats_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        self.stats_text.configure(yscrollcommand=stats_scrollbar.set)
-        
         # 制御ボタン
-        button_frame = ttk.Frame(content_frame)
-        button_frame.grid(row=3, column=0, pady=10)
-        
         self.stop_button = ttk.Button(
-            button_frame,
+            center_frame,
             text="強制停止",
             command=self.app.stop_scraping,
-            state='normal'
+            width=15
         )
-        self.stop_button.pack()
-        
-        # グリッド設定
-        content_frame.columnconfigure(0, weight=1)
-        content_frame.rowconfigure(1, weight=1)
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        stats_frame.columnconfigure(0, weight=1)
+        self.stop_button.grid(row=2, column=0, pady=10)
     
-    def initialize_time_prediction(self):
-        """処理時間予測の初期化"""
-        self.update_time_prediction()
-        self.update_time_zone_info()
-    
-    def update_time_prediction(self):
-        """処理時間予測の更新"""
+    def on_count_entry_changed(self, event):
+        """手入力時の処理"""
         try:
-            # 件数取得
-            if self.unlimited_var.get():
-                store_count = 100  # 予測用のサンプル数
-                count_text = "全件"
-            else:
-                store_count = self.max_count_var.get()
-                count_text = f"{store_count}件"
-            
-            # 時間予測計算
-            estimated_minutes = self.app.get_estimated_time(store_count)
-            
-            if estimated_minutes < 1:
-                time_text = f"約{estimated_minutes*60:.0f}秒"
-            else:
-                time_text = f"約{estimated_minutes:.0f}分"
-            
-            # 予測時間表示更新
-            prediction_text = f"{count_text}の処理予想時間: {time_text}"
-            
-            # 長時間処理の警告
-            if estimated_minutes > 30:
-                prediction_text += "\n⚠️ 処理時間が長くなります。深夜時間帯での実行を推奨。"
-            
-            self.time_prediction_var.set(prediction_text)
-            
-        except Exception as e:
-            self.time_prediction_var.set("予測時間計算エラー")
+            value = self.count_entry.get()
+            if value:
+                count = int(value)
+                if count < 1:
+                    count = 1
+                elif count > 5000:
+                    count = 5000
+                self.max_count_var.set(count)
+        except ValueError:
+            pass
     
-    def update_time_zone_info(self):
-        """時間帯情報の更新"""
-        try:
-            current_hour = datetime.now().hour
-            if 12 <= current_hour <= 13:
-                time_zone = "昼食時間帯 (処理時間 +50%)"
-                color = 'orange'
-            elif 18 <= current_hour <= 20:
-                time_zone = "夕食時間帯 (処理時間 +30%)"
-                color = 'orange'
-            elif current_hour >= 23 or current_hour <= 6:
-                time_zone = "深夜・早朝時間帯 (処理時間 -20%)"
-                color = 'green'
-            else:
-                time_zone = "通常時間帯"
-                color = 'black'
-            
-            self.time_zone_var.set(f"現在: {time_zone}")
-            
-        except Exception as e:
-            self.time_zone_var.set("時間帯情報取得エラー")
+    def update_count_from_slider(self, value):
+        """スライダー変更時の処理"""
+        count = int(float(value))
+        self.max_count_var.set(count)
+    
+    def on_unlimited_changed(self):
+        """全件取得チェック変更時の処理"""
+        if self.unlimited_var.get():
+            self.count_scale.config(state='disabled')
+            self.count_entry.config(state='disabled')
+        else:
+            self.count_scale.config(state='normal')
+            self.count_entry.config(state='normal')
     
     def on_prefecture_changed(self, event):
         """都道府県変更時の処理"""
         prefecture = self.prefecture_var.get()
         if prefecture:
             self.app.on_prefecture_changed(prefecture)
-            self.update_time_prediction()
     
     def update_city_list(self, cities):
         """市区町村リスト更新"""
         self.city_combo['values'] = [''] + cities
         self.city_var.set('')
-        self.update_time_prediction()
-    
-    def update_count_label(self, value):
-        """件数ラベル更新（時間予測付き）"""
-        count = int(float(value))
-        self.count_label.config(text=f"{count}件")
-        self.max_count_var.set(count)
-        self.update_time_prediction()
-    
-    def on_unlimited_changed(self):
-        """無制限チェック変更時の処理（時間予測付き）"""
-        if self.unlimited_var.get():
-            self.count_scale.config(state='disabled')
-            self.count_label.config(text="全件")
-        else:
-            self.count_scale.config(state='normal')
-            self.update_count_label(self.max_count_var.get())
-        
-        self.update_time_prediction()
     
     def browse_save_path(self):
         """保存先選択"""
@@ -561,8 +452,6 @@ class UIManager:
         """実行中タブに切り替え"""
         self.notebook.select(self.running_tab)
         self.start_timer()
-        # 時間帯情報も更新
-        self.update_time_zone_info()
     
     def start_timer(self):
         """タイマー開始"""
@@ -584,69 +473,53 @@ class UIManager:
             self.window.after(100, self.update_timer)
     
     def update_progress(self, data):
-        """進捗更新（統計情報対応）"""
+        """進捗更新（改善版）"""
         if 'message' in data:
             self.status_var.set(data['message'])
             self.add_log(data['message'])
         
-        if 'progress' in data:
+        # 進捗率の計算を改善
+        if 'current' in data and 'total' in data:
+            self.current_store = data['current']
+            self.total_stores = data['total']
+            
+            # より正確な進捗率計算
+            if self.total_stores > 0:
+                # 詳細取得フェーズの場合、50%から開始
+                if 'phase' in data and data['phase'] == 'detail':
+                    base_progress = 50
+                    detail_progress = (self.current_store / self.total_stores) * 50
+                    actual_progress = base_progress + detail_progress
+                else:
+                    # リスト取得フェーズは0-50%
+                    actual_progress = min(data.get('progress', 0), 50)
+                
+                self.progress_var.set(actual_progress)
+                self.progress_label.config(text=f"{self.current_store} / {self.total_stores} 件")
+        elif 'progress' in data:
+            # フォールバック
             self.progress_var.set(data['progress'])
-            self.progress_label.config(text=f"{int(data['progress'])}%")
-        
-        # 統計情報の表示
-        if 'stats' in data:
-            self.update_stats_display(data['stats'])
         
         if 'phase' in data:
             if data['phase'] == 'complete':
                 self.timer_running = False
-                self.add_log("=== スクレイピング完了 ===")
+                self.progress_var.set(100)
+                self.progress_label.config(text=f"{self.total_stores} / {self.total_stores} 件")
+                self.add_log("=== 処理完了 ===")
                 
-                # 最終統計の表示
-                if 'final_stats' in data:
-                    self.display_final_stats(data['final_stats'])
-    
-    def update_stats_display(self, stats):
-        """統計情報表示更新"""
-        try:
-            # 5秒に一度だけ統計更新
-            if time.time() - self.last_stats_update < 5:
-                return
-            
-            self.last_stats_update = time.time()
-            
-            # 統計情報のフォーマット
-            stats_text = "=== 処理統計 ===\n"
-            for key, value in stats.items():
-                stats_text += f"{key}: {value}\n"
-            
-            # 統計テキストエリアに表示
-            self.stats_text.delete(1.0, tk.END)
-            self.stats_text.insert(tk.END, stats_text)
-            
-            # 完了予想時刻の表示
-            if '完了予想時刻' in stats and stats['完了予想時刻'] != 'N/A':
-                completion_time = stats['完了予想時刻']
-                self.status_var.set(f"処理中... (完了予想: {completion_time})")
-            
-        except Exception as e:
-            self.add_log(f"統計表示エラー: {e}")
-    
-    def display_final_stats(self, final_stats):
-        """最終統計の表示"""
-        try:
-            final_text = "\n=== 最終統計 ===\n"
-            for key, value in final_stats.items():
-                final_text += f"{key}: {value}\n"
-            
-            self.add_log(final_text)
-            
-            # 統計テキストエリアにも表示
-            self.stats_text.insert(tk.END, final_text)
-            self.stats_text.see(tk.END)
-            
-        except Exception as e:
-            self.add_log(f"最終統計表示エラー: {e}")
+                # シンプルな完了メッセージ
+                if 'elapsed_time' in data:
+                    elapsed = data['elapsed_time']
+                    minutes, seconds = divmod(int(elapsed), 60)
+                    if minutes > 0:
+                        time_text = f"{minutes}分{seconds}秒"
+                    else:
+                        time_text = f"{seconds}秒"
+                    
+                    messagebox.showinfo(
+                        "完了",
+                        f"処理が完了しました\n\n処理時間: {time_text}"
+                    )
     
     def add_log(self, message):
         """ログ追加"""
@@ -657,19 +530,20 @@ class UIManager:
         
         # ログが長くなりすぎた場合の制限
         lines = self.log_text.get(1.0, tk.END).split('\n')
-        if len(lines) > 200:
+        if len(lines) > 100:
             # 古い行を削除
-            self.log_text.delete(1.0, f"{len(lines)-150}.0")
+            self.log_text.delete(1.0, f"{len(lines)-80}.0")
     
     def reset_progress(self):
         """進捗リセット"""
         self.progress_var.set(0)
-        self.progress_label.config(text="0%")
+        self.progress_label.config(text="0 / 0 件")
         self.status_var.set("待機中")
         self.elapsed_var.set("経過時間: 0秒")
         self.timer_running = False
+        self.total_stores = 0
+        self.current_store = 0
         self.log_text.delete(1.0, tk.END)
-        self.stats_text.delete(1.0, tk.END)
     
     def get_search_params(self):
         """検索パラメータ取得"""
@@ -680,7 +554,7 @@ class UIManager:
             'unlimited': self.unlimited_var.get(),
             'save_path': self.save_path_var.get(),
             'filename': self.filename_var.get(),
-            'url_only': getattr(self, 'url_only_var', tk.BooleanVar()).get()
+            'url_only': False  # 削除されたオプション
         }
         return params
     
@@ -691,12 +565,3 @@ class UIManager:
             'cooltime_max': self.cooltime_max_var.get(),
             'ua_switch_interval': self.ua_switch_var.get()
         }
-    
-    def stop_timer(self):
-        """タイマー停止"""
-        self.timer_running = False
-    
-    def error_cleanup(self):
-        """エラー時のクリーンアップ"""
-        self.timer_running = False
-        self.reset_progress()

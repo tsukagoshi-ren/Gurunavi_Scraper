@@ -1,6 +1,6 @@
 """
 現実的処理時間対応スクレイピングエンジン
-段階的動的生成対応版（スクロール誘発 + ネットワーク完了検知）
+全国対応・正しいURL構造に対応
 """
 
 import time
@@ -26,7 +26,7 @@ except ImportError:
     SELENIUM_AVAILABLE = False
 
 class ImprovedScraperEngine:
-    """段階的動的生成対応スクレイピングエンジンクラス"""
+    """段階的動的生成対応スクレイピングエンジンクラス（ページネーション修正版）"""
     
     def __init__(self, chrome_manager, prefecture_mapper, config, callback=None):
         self.logger = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ class ImprovedScraperEngine:
             for i, position in enumerate(scroll_positions):
                 self.logger.debug(f"スクロール {i+1}/{len(scroll_positions)}: {position}px")
                 self.driver.execute_script(f"window.scrollTo(0, {position});")
-                time.sleep(0.8)  # 短時間で効率的に
+                time.sleep(0.8)
                 
                 # 途中で要素チェック（効率化）
                 if i == 4:  # 中間地点で確認
@@ -401,14 +401,15 @@ class ImprovedScraperEngine:
             return None
     
     def get_store_list(self, prefecture, city, max_count, unlimited):
-        """店舗一覧取得（段階的読み込み対応）"""
+        """店舗一覧取得（正しいページネーション対応）"""
         try:
             if not self.initialize_driver():
                 raise Exception("ドライバー初期化失敗")
             
-            # URL生成
-            search_url = self.prefecture_mapper.generate_search_url(prefecture, city)
+            # URL生成（最初のページ）
+            search_url = self.prefecture_mapper.generate_search_url(prefecture, city, page=1)
             self.logger.info(f"検索URL: {search_url}")
+            self.logger.info(f"検索エリア: {self.prefecture_mapper.get_area_display_name(prefecture, city)}")
             
             # ページアクセス
             self.driver.get(search_url)
@@ -432,7 +433,7 @@ class ImprovedScraperEngine:
             page_num = 1
             self.processed_urls.clear()
             consecutive_empty_pages = 0
-            max_pages = 50 if unlimited else min(20, (max_count // 20) + 5)
+            max_pages = 50 if unlimited else min(20, (max_count // 30) + 5)  # 1ページ30件なので調整
             
             while len(all_store_urls) < (float('inf') if unlimited else max_count):
                 # 進捗コールバック
@@ -485,12 +486,15 @@ class ImprovedScraperEngine:
                     self.logger.warning(f"最大ページ数({max_pages})に到達しました")
                     break
                 
-                # 次ページへ
-                if not self._go_to_next_page():
-                    self.logger.info("次ページがありません")
-                    break
-                
+                # 次ページへ（正しいURL生成）
                 page_num += 1
+                next_url = self.prefecture_mapper.generate_search_url(prefecture, city, page=page_num)
+                
+                self.logger.info(f"次ページへ移動: {next_url}")
+                self.driver.get(next_url)
+                
+                # ページ読み込み待機
+                self._wait_for_stepwise_content_load()
                 self.wait_with_cooltime()
             
             # 結果を店舗情報形式に変換
@@ -553,140 +557,35 @@ class ImprovedScraperEngine:
             self.logger.error(f"店舗URL抽出エラー: {e}")
             return []
     
-    def _go_to_next_page(self):
-        """次ページへ移動（段階的読み込み対応）"""
-        try:
-            # 次ページボタンの候補セレクタ
-            next_selectors = [
-                "a.next",
-                ".pagination .next a",
-                ".pagination__next a",
-                "[class*='next'] a",
-                "a[rel='next']",
-                ".pager-next a",
-                ".paging-next a",
-                "a[title*='次']",
-                "a[title*='Next']"
-            ]
-            
-            for selector in next_selectors:
-                try:
-                    next_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for next_element in next_elements:
-                        if next_element.is_displayed() and next_element.is_enabled():
-                            # 次ページボタンをクリック前にスクロール
-                            self.driver.execute_script("arguments[0].scrollIntoView(true);", next_element)
-                            time.sleep(0.5)
-                            
-                            # クリック
-                            self.driver.execute_script("arguments[0].click();", next_element)
-                            
-                            # ページ遷移を待つ
-                            time.sleep(2)
-                            
-                            # 段階的読み込み完了を待つ
-                            self._wait_for_stepwise_content_load()
-                            
-                            return True
-                except Exception:
-                    continue
-            
-            return False
-            
-        except Exception as e:
-            self.logger.warning(f"次ページ移動エラー: {e}")
-            return False
-            
     def get_store_detail(self, url):
+        """店舗詳細取得（4項目のみ）"""
         try:
             self.driver.get(url)
             
-            # 複数アプローチ抽出器を使用
-            extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
-            detail = extractor.extract_store_data(url)
+            # 段階的コンテンツ読み込み
+            self._wait_for_stepwise_content_load()
             
+            # 複数アプローチ抽出器を使用（4項目のみ）
+            extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
+            detail = extractor.extract_store_data_multi_modified(url)
+            
+            self.wait_with_cooltime()
             return detail
             
         except Exception as e:
             self.logger.error(f"店舗詳細取得エラー: {e}")
             return self._get_default_detail(url)
-            
-    def _detect_captcha(self):
-        """CAPTCHA検知"""
-        try:
-            captcha_indicators = [
-                "recaptcha",
-                "captcha",
-                "robot",
-                "verification",
-                "security check"
-            ]
-            
-            page_source = self.driver.page_source.lower()
-            return any(indicator in page_source for indicator in captcha_indicators)
-            
-        except Exception:
-            return False
     
-    def _detect_ip_restriction(self):
-        """IP制限検知"""
-        try:
-            # HTTPエラーコードチェック
-            if "403" in self.driver.title or "429" in self.driver.title:
-                return True
-            
-            # 一般的な制限メッセージ
-            restriction_messages = [
-                "access denied",
-                "too many requests",
-                "rate limit",
-                "blocked",
-                "アクセスが制限",
-                "接続できません"
-            ]
-            
-            page_source = self.driver.page_source.lower()
-            return any(msg in page_source for msg in restriction_messages)
-            
-        except Exception:
-            return False
-
-    """
-    修正箇所のみ抜粋：scraper_engine.py
-
-    1. _extract_gurunavi_store_dataメソッドを修正（4項目のみ）
-    2. save_store_listメソッドの呼び出しを削除
-    3. 電話番号クリーニング処理を追加
-    """
-
-    # 1. _extract_gurunavi_store_dataメソッドの修正版
-    def _extract_gurunavi_store_data(self, url):
-        """ぐるなび店舗データ抽出（4項目のみ）"""
-        try:
-            from datetime import datetime
-            
-            # 基本情報の初期化（4項目のみ）
-            detail = {
-                'URL': url,
-                '店舗名': '-',
-                '電話番号': '-',
-                '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            # 店舗名を取得
-            detail['店舗名'] = self._extract_gurunavi_shop_name()
-            
-            # 電話番号を取得してクリーニング
-            raw_phone = self._extract_gurunavi_phone_number()
-            detail['電話番号'] = self._clean_phone_number(raw_phone)
-            
-            return detail
-            
-        except Exception as e:
-            self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
-            return self._get_default_detail(url)
-
-    # 2. 電話番号クリーニング用メソッドを追加
+    def _get_default_detail(self, url):
+        """デフォルトの店舗データ（4項目のみ）"""
+        from datetime import datetime
+        return {
+            'URL': url,
+            '店舗名': '取得失敗',
+            '電話番号': '-',
+            '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    
     def _clean_phone_number(self, raw_text):
         """電話番号クリーニング処理"""
         if not raw_text or raw_text == '-':
@@ -728,408 +627,47 @@ class ImprovedScraperEngine:
         except Exception as e:
             self.logger.warning(f"電話番号クリーニングエラー: {e}")
             return raw_text
-
-    # 3. _get_default_detailメソッドを修正（4項目のみ）
-    def _get_default_detail(self, url):
-        """デフォルトの店舗データ（4項目のみ）"""
-        from datetime import datetime
-        return {
-            'URL': url,
-            '店舗名': '取得失敗',
-            '電話番号': '-',
-            '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-    # 4. GurunaviLabelBasedExtractorを使用する場合の修正
-    def get_store_detail(self, url):
-        """店舗詳細取得（4項目のみ）"""
+    
+    def _detect_captcha(self):
+        """CAPTCHA検知"""
         try:
-            self.driver.get(url)
-            
-            # 段階的コンテンツ読み込み
-            self._wait_for_stepwise_content_load()
-            
-            # データ抽出（4項目のみ）
-            detail = self._extract_gurunavi_store_data(url)
-            
-            self.wait_with_cooltime()
-            return detail
-            
-        except Exception as e:
-            self.logger.error(f"店舗詳細取得エラー: {e}")
-            return self._get_default_detail(url)
-        
-    def _extract_gurunavi_shop_name(self):
-        """ぐるなび店舗名抽出（段階的生成対応）"""
-        selectors = [
-            "#info-name",
-            ".fn.org.summary",
-            "#info-table .fn",
-            "h1",
-            ".shop-name",
-            ".restaurant-name"
-        ]
-        
-        for selector in selectors:
-            try:
-                element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                if element and element.text.strip():
-                    name = element.text.strip()
-                    self.logger.debug(f"店舗名取得成功: {selector} = {name}")
-                    return name
-            except (NoSuchElementException, Exception):
-                continue
-        
-        # メタタグからの取得
-        try:
-            element = self.driver.find_element(By.CSS_SELECTOR, "meta[property='og:title']")
-            content = element.get_attribute("content")
-            if content and content.strip():
-                name = content.split(' - ')[0].split('｜')[0].strip()
-                if name and name != 'ぐるなび':
-                    self.logger.debug(f"店舗名取得成功: メタタグ = {name}")
-                    return name
-        except:
-            pass
-        
-        # titleタグから
-        try:
-            title = self.driver.title
-            if title and title.strip():
-                name = title.split(' - ')[0].split('｜')[0].strip()
-                if name and name != 'ぐるなび':
-                    self.logger.debug(f"店舗名取得成功: title = {name}")
-                    return name
-        except:
-            pass
-        
-        self.logger.warning("店舗名の取得に失敗しました")
-        return '-'
-
-    def _extract_gurunavi_phone_number(self):
-        """ぐるなび電話番号抽出（段階的生成対応）"""
-        try:
-            # 優先順位に基づく抽出
-            phone_selectors = [
-                "#info-phone .number",
-                ".number",
-                "#info-phone td span",
-                "#info-phone td li",
+            captcha_indicators = [
+                "recaptcha",
+                "captcha",
+                "robot",
+                "verification",
+                "security check"
             ]
             
-            for selector in phone_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in elements:
-                        text = element.text.strip()
-                        if text and self._is_valid_phone_number(text):
-                            self.logger.debug(f"電話番号取得成功: {selector} = {text}")
-                            return text
-                except:
-                    continue
+            page_source = self.driver.page_source.lower()
+            return any(indicator in page_source for indicator in captcha_indicators)
             
-            # tel:リンクからの取得
-            try:
-                tel_elements = self.driver.find_elements(By.CSS_SELECTOR, "a[href^='tel:']")
-                for tel_element in tel_elements:
-                    href = tel_element.get_attribute("href")
-                    if href:
-                        phone = href.replace("tel:", "").strip()
-                        if self._is_valid_phone_number(phone):
-                            self.logger.debug(f"電話番号取得成功: tel:リンク = {phone}")
-                            return phone
-            except:
-                pass
-            
-            # 電話番号行からの正規表現抽出
-            try:
-                phone_row = self.driver.find_element(By.CSS_SELECTOR, "#info-phone td")
-                text = phone_row.text
-                phone_match = re.search(r'(\d{2,4}[-\s]?\d{2,4}[-\s]?\d{3,4})', text)
-                if phone_match and self._is_valid_phone_number(phone_match.group(1)):
-                    phone = phone_match.group(1)
-                    self.logger.debug(f"電話番号取得成功: 正規表現 = {phone}")
-                    return phone
-            except:
-                pass
-            
-            return '-'
-            
-        except Exception as e:
-            self.logger.warning(f"電話番号抽出エラー: {e}")
-            return '-'
-
-    def _extract_gurunavi_address(self):
-        """ぐるなび住所抽出（段階的生成対応）"""
-        selectors = [
-            ".adr .region",
-            ".region",
-            ".adr",
-            ".adr p",
-        ]
-        
-        for selector in selectors:
-            try:
-                element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                if element and element.text.strip():
-                    address = element.text.strip()
-                    # 郵便番号を除去
-                    address = re.sub(r'〒\d{3}-\d{4}\s*', '', address)
-                    if address:
-                        self.logger.debug(f"住所取得成功: {selector} = {address}")
-                        return address
-            except:
-                continue
-        
-        # テーブル行からの直接抽出
+        except Exception:
+            return False
+    
+    def _detect_ip_restriction(self):
+        """IP制限検知"""
         try:
-            rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr")
-            for row in rows:
-                try:
-                    th = row.find_element(By.TAG_NAME, "th")
-                    if th and "住所" in th.text:
-                        td = row.find_element(By.TAG_NAME, "td")
-                        if td:
-                            address = td.text.strip()
-                            address = re.sub(r'〒\d{3}-\d{4}\s*', '', address)
-                            if address:
-                                self.logger.debug(f"住所取得成功: テーブル行 = {address}")
-                                return address
-                except:
-                    continue
-        except:
-            pass
-        
-        self.logger.warning("住所の取得に失敗しました")
-        return '-'
-
-    def _extract_gurunavi_genre(self):
-        """ぐるなびジャンル抽出（段階的生成対応）"""
-        try:
-            # "お店のウリ" から抽出
-            try:
-                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table-service tr")
-                for row in rows:
-                    try:
-                        th = row.find_element(By.TAG_NAME, "th")
-                        if th and "お店のウリ" in th.text:
-                            td = row.find_element(By.TAG_NAME, "td")
-                            li_elements = td.find_elements(By.TAG_NAME, "li")
-                            if li_elements:
-                                genres = [li.text.strip() for li in li_elements if li.text.strip()]
-                                if genres:
-                                    genre_text = "、".join(genres)
-                                    self.logger.debug(f"ジャンル取得成功: お店のウリ = {genre_text}")
-                                    return genre_text
-                    except:
-                        continue
-            except:
-                pass
+            # HTTPエラーコードチェック
+            if "403" in self.driver.title or "429" in self.driver.title:
+                return True
             
-            # メニューのサービスから抽出
-            try:
-                service_rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table-service tr")
-                for row in service_rows:
-                    try:
-                        th = row.find_element(By.TAG_NAME, "th")
-                        if th and "メニューのサービス" in th.text:
-                            td = row.find_element(By.TAG_NAME, "td")
-                            if td:
-                                genre_text = td.text.strip()
-                                if genre_text:
-                                    self.logger.debug(f"ジャンル取得成功: メニューのサービス = {genre_text}")
-                                    return genre_text
-                    except:
-                        continue
-            except:
-                pass
-            
-            # その他のカテゴリ情報
-            category_selectors = [
-                ".category",
-                ".breadcrumb a",
-                "[class*='category']",
-                "[class*='genre']"
+            # 一般的な制限メッセージ
+            restriction_messages = [
+                "access denied",
+                "too many requests",
+                "rate limit",
+                "blocked",
+                "アクセスが制限",
+                "接続できません"
             ]
             
-            for selector in category_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in elements:
-                        text = element.text.strip()
-                        if text and text not in ['ホーム', 'トップ', 'ぐるなび']:
-                            self.logger.debug(f"ジャンル取得成功: {selector} = {text}")
-                            return text
-                except:
-                    continue
+            page_source = self.driver.page_source.lower()
+            return any(msg in page_source for msg in restriction_messages)
             
-            return '-'
-            
-        except Exception as e:
-            self.logger.warning(f"ジャンル抽出エラー: {e}")
-            return '-'
-
-    def _extract_gurunavi_business_hours(self):
-        """ぐるなび営業時間抽出（段階的生成対応）"""
-        try:
-            selectors = [
-                "#info-open td div",
-                "#info-open td",
-                "#info-open",
-            ]
-            
-            for selector in selectors:
-                try:
-                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if element:
-                        hours_text = element.text.strip()
-                        if hours_text and "営業時間" not in hours_text:
-                            hours_text = hours_text.replace('\n', ' ')
-                            hours_text = ' '.join(hours_text.split())
-                            if hours_text:
-                                self.logger.debug(f"営業時間取得成功: {selector} = {hours_text}")
-                                return hours_text
-                except:
-                    continue
-            
-            # テーブル行から直接検索
-            try:
-                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr")
-                for row in rows:
-                    try:
-                        th = row.find_element(By.TAG_NAME, "th")
-                        if th and "営業時間" in th.text:
-                            td = row.find_element(By.TAG_NAME, "td")
-                            if td:
-                                hours_text = td.text.strip()
-                                if hours_text:
-                                    hours_text = hours_text.replace('\n', ' ')
-                                    hours_text = ' '.join(hours_text.split())
-                                    self.logger.debug(f"営業時間取得成功: テーブル行 = {hours_text}")
-                                    return hours_text
-                    except:
-                        continue
-            except:
-                pass
-            
-            return '-'
-            
-        except Exception as e:
-            self.logger.warning(f"営業時間抽出エラー: {e}")
-            return '-'
-
-    def _extract_gurunavi_holiday(self):
-        """ぐるなび定休日抽出（段階的生成対応）"""
-        try:
-            selectors = [
-                "#info-holiday td li",
-                "#info-holiday td ul li",
-                "#info-holiday td",
-                "#info-holiday",
-            ]
-            
-            for selector in selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elements:
-                        holiday_list = []
-                        for element in elements:
-                            text = element.text.strip()
-                            if text and "定休日" not in text:
-                                holiday_list.append(text)
-                        
-                        if holiday_list:
-                            holiday_text = "、".join(holiday_list)
-                            self.logger.debug(f"定休日取得成功: {selector} = {holiday_text}")
-                            return holiday_text
-                except:
-                    continue
-            
-            # テーブル行から直接検索
-            try:
-                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr")
-                for row in rows:
-                    try:
-                        th = row.find_element(By.TAG_NAME, "th")
-                        if th and "定休日" in th.text:
-                            td = row.find_element(By.TAG_NAME, "td")
-                            if td:
-                                holiday_text = td.text.strip()
-                                if holiday_text:
-                                    self.logger.debug(f"定休日取得成功: テーブル行 = {holiday_text}")
-                                    return holiday_text
-                    except:
-                        continue
-            except:
-                pass
-            
-            return '-'
-            
-        except Exception as e:
-            self.logger.warning(f"定休日抽出エラー: {e}")
-            return '-'
-
-    def _extract_gurunavi_credit_card(self):
-        """ぐるなびクレジットカード情報抽出（段階的生成対応）"""
-        try:
-            search_terms = [
-                "クレジットカード",
-                "カード",
-                "支払い",
-                "決済",
-                "VISA",
-                "MasterCard",
-                "JCB",
-                "AMEX",
-                "American Express"
-            ]
-            
-            # テーブルから検索
-            try:
-                rows = self.driver.find_elements(By.CSS_SELECTOR, "#info-table tr, #info-table-service tr, #info-table-seat tr")
-                for row in rows:
-                    try:
-                        th = row.find_element(By.TAG_NAME, "th")
-                        th_text = th.text.strip()
-                        
-                        if any(term in th_text for term in search_terms):
-                            td = row.find_element(By.TAG_NAME, "td")
-                            if td:
-                                card_info = td.text.strip()
-                                if card_info:
-                                    self.logger.debug(f"クレジットカード情報取得成功: {th_text} = {card_info}")
-                                    return card_info
-                    except:
-                        continue
-            except:
-                pass
-            
-            # ページ全体から検索
-            try:
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text
-                
-                if any(pattern in page_text for pattern in ['クレジットカード利用可', 'カード利用可', 'VISA利用可']):
-                    self.logger.debug("クレジットカード情報取得成功: 利用可パターン")
-                    return '利用可'
-                elif any(pattern in page_text for pattern in ['クレジットカード不可', 'カード不可', '現金のみ']):
-                    self.logger.debug("クレジットカード情報取得成功: 利用不可パターン")
-                    return '利用不可'
-                elif 'クレジットカード' in page_text:
-                    card_match = re.search(r'クレジットカード[：:]\s*([^\n]+)', page_text)
-                    if card_match:
-                        card_info = card_match.group(1).strip()
-                        self.logger.debug(f"クレジットカード情報取得成功: 正規表現 = {card_info}")
-                        return card_info
-                    return '要確認'
-            except:
-                pass
-            
-            return '-'
-            
-        except Exception as e:
-            self.logger.warning(f"クレジットカード情報抽出エラー: {e}")
-            return '-'
-
+        except Exception:
+            return False
+    
     def _is_valid_phone_number(self, phone_str):
         """電話番号の妥当性チェック"""
         if not phone_str:
@@ -1138,36 +676,9 @@ class ImprovedScraperEngine:
         # 数字とハイフンのみ抽出
         cleaned = re.sub(r'[^\d-]', '', str(phone_str))
         
-        # 基本的な電話番号のパターンチェック
-        patterns = [
-            r'^\d{2,4}-\d{2,4}-\d{3,4}' # 03-1234-5678
-            ,  
-            r'^\d{10,11}'   # 03123456789
-            ,                 
-            r'^\d{2,4}\d{2,4}\d{3,4}'   # 区切りなし
-            
-        ]
-        
-        for pattern in patterns:
-            if re.match(pattern, cleaned):
-                digits_only = cleaned.replace('-', '')
-                return 10 <= len(digits_only) <= 11
-        
-        return False
-    
-    def _get_default_detail(self, url):
-        """デフォルトの店舗データ"""
-        return {
-            'URL': url,
-            '店舗名': '取得失敗',
-            '電話番号': '-',
-            '住所': '-',
-            'ジャンル': '-',
-            '営業時間': '-',
-            '定休日': '-',
-            'クレジットカード': '-',
-            '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+        # 10-11桁の数字があるかチェック
+        digits_only = cleaned.replace('-', '')
+        return 10 <= len(digits_only) <= 11
     
     def _update_estimated_completion(self):
         """完了予想時間の更新"""
@@ -1210,7 +721,7 @@ class ImprovedScraperEngine:
         self.logger.info(f"=== 処理開始 (段階的動的生成対応版) ===")
         self.logger.info(f"対象店舗数: {len(store_list)}")
         self.logger.info(f"時間帯倍率: {self.time_multiplier}x")
-        self.logger.info(f"予想処理時間: {len(store_list) * 8 * self.time_multiplier / 60:.1f}分")  # 段階的読み込み考慮
+        self.logger.info(f"予想処理時間: {len(store_list) * 8 * self.time_multiplier / 60:.1f}分")
         
         if not self.initialize_driver():
             raise Exception("ドライバー初期化失敗")
@@ -1232,6 +743,15 @@ class ImprovedScraperEngine:
                 # 店舗詳細取得
                 detail = self.get_store_detail(store['url'])
                 self.current_results.append(detail)
+                
+                # 統計更新
+                self.stats['processed_stores'] = idx
+                if detail['店舗名'] != '取得失敗':
+                    self.stats['successful_stores'] += 1
+                else:
+                    self.stats['failed_stores'] += 1
+                
+                self._update_estimated_completion()
                 
                 # 逐次保存
                 self.save_results_incremental(
@@ -1259,40 +779,6 @@ class ImprovedScraperEngine:
             
         finally:
             self.cleanup()
-    
-    def save_store_list(self, store_list, save_path, filename):
-        """店舗一覧をExcelに保存"""
-        try:
-            df = pd.DataFrame(store_list)
-            
-            save_dir = Path(save_path)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            
-            if not filename.endswith('.xlsx'):
-                filename += '.xlsx'
-            
-            full_path = save_dir / filename
-            
-            with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name='店舗一覧', index=False)
-                
-                worksheet = writer.sheets['店舗一覧']
-                for column in worksheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 100)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
-            
-            self.logger.info(f"店舗一覧保存: {full_path}")
-            
-        except Exception as e:
-            self.logger.error(f"店舗一覧保存エラー: {e}")
     
     def save_results_incremental(self, detail_data, save_path, filename):
         """逐次Excelファイル保存"""
