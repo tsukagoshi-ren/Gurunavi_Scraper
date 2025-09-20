@@ -567,7 +567,7 @@ class ImprovedScraperEngine:
             
             # 複数アプローチ抽出器を使用（4項目のみ）
             extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
-            detail = extractor.extract_store_data_multi_modified(url)
+            detail = extractor.extract_store_data_multi(url)
             
             self.wait_with_cooltime()
             return detail

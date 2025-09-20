@@ -19,7 +19,7 @@ class GurunaviMultiApproachExtractor:
         self.logger = logger or logging.getLogger(__name__)
         self.wait = WebDriverWait(driver, 15)
     
-    def extract_store_data_multi_modified(self, url):
+    def extract_store_data_multi(self, url):
         """店舗データを抽出（4項目のみ）"""
         try:
             from datetime import datetime
@@ -369,18 +369,46 @@ class GurunaviMultiApproachExtractor:
         
         return '-'
     
-    def _is_valid_phone_number(self, phone_str):
-        """電話番号の妥当性チェック"""
-        if not phone_str:
-            return False
-        
-        # 数字とハイフンのみ抽出
-        cleaned = re.sub(r'[^\d-]', '', str(phone_str))
-        
-        # 10-11桁の数字があるかチェック
-        digits_only = cleaned.replace('-', '')
-        return 10 <= len(digits_only) <= 11
-    
+    def _clean_phone_number(self, raw_text):
+            """電話番号クリーニング処理"""
+            if not raw_text or raw_text == '-':
+                return raw_text
+            
+            try:
+                # 改行で分割して最初の行を取得
+                lines = raw_text.strip().split('\n')
+                first_line = lines[0].strip() if lines else raw_text.strip()
+                
+                # 電話番号パターンにマッチする部分を抽出
+                patterns = [
+                    r'(0\d{1,4}-\d{1,4}-\d{3,4})',
+                    r'(0\d{9,10})',
+                    r'(050-\d{4}-\d{4})',
+                    r'(0120-\d{3}-\d{3})',
+                ]
+                
+                for pattern in patterns:
+                    match = re.search(pattern, first_line)
+                    if match:
+                        phone = match.group(1)
+                        self.logger.debug(f"電話番号クリーニング: '{raw_text[:30]}...' → '{phone}'")
+                        return phone
+                
+                # マッチしない場合、不要な文言を除外
+                if any(kw in first_line for kw in ['ぐるなび', '見た', 'スムーズ', '問合']):
+                    numbers = re.findall(r'[\d-]+', first_line)
+                    if numbers:
+                        phone = numbers[0]
+                        digits_only = re.sub(r'[^\d]', '', phone)
+                        if 10 <= len(digits_only) <= 11:
+                            return phone
+                
+                return first_line
+                
+            except Exception as e:
+                self.logger.warning(f"電話番号クリーニングエラー: {e}")
+                return raw_text
+            
     def _get_current_datetime(self):
         """現在日時を取得"""
         from datetime import datetime
@@ -408,8 +436,8 @@ class GurunaviMultiApproachExtractor:
             """ぐるなび店舗データ抽出（改善版）"""
             try:
                 # 改善版抽出器を使用
-                extractor = GurunaviImprovedExtractor(self.driver, self.logger)
-                return extractor.extract_store_data(url)
+                extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
+                return extractor.extract_store_data_multi(url)
                 
             except Exception as e:
                 self.logger.error(f"ぐるなびデータ抽出エラー: {e}")
