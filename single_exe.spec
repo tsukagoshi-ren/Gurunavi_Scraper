@@ -1,21 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 
 block_cipher = None
+
+# データファイルのリスト（存在するものだけ）
+data_files = []
+for file in ['ui_manager.py', 'scraper_engine.py', 'chrome_driver_manager.py', 
+             'prefecture_mapper.py', 'gurunavi_label_based_extractor.py',
+             'gurunavi_multi_approach_extractor.py', 'phone_cleaner_simple.py']:
+    if os.path.exists(file):
+        data_files.append((file, '.'))
+
+# config.jsonがある場合のみ追加
+if os.path.exists('config.json'):
+    data_files.append(('config.json', '.'))
 
 a = Analysis(
     ['gurunavi_scraper_v3.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('ui_manager.py', '.'),
-        ('scraper_engine.py', '.'),
-        ('chrome_driver_manager.py', '.'),
-        ('prefecture_mapper.py', '.'),
-        ('gurunavi_label_based_extractor.py', '.'),
-        ('gurunavi_multi_approach_extractor.py', '.'),
-        ('phone_cleaner_simple.py', '.'),
-        ('config.json', '.') if os.path.exists('config.json') else None
-    ],
+    datas=data_files,
     hiddenimports=[
         'numpy',
         'numpy.core._multiarray_umath',
@@ -59,9 +63,6 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
-
-# データファイルのNoneを除去
-a.datas = [x for x in a.datas if x is not None]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

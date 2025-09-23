@@ -1,6 +1,6 @@
 """
 Beyond Gurunavi Scraper - 整理された配布パッケージビルドスクリプト
-ChromeDriver同梱版
+ChromeDriver同梱版（アクセス権限エラー対応）
 """
 
 import os
@@ -8,8 +8,59 @@ import sys
 import shutil
 import subprocess
 import zipfile
+import time
+import stat
 from pathlib import Path
 from datetime import datetime
+
+def force_remove_readonly(func, path, excinfo):
+    """読み取り専用ファイルを強制削除するためのコールバック"""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception as e:
+        print(f"  ⚠️ ファイル削除エラー: {path} - {e}")
+
+def safe_remove_directory(path):
+    """ディレクトリを安全に削除（複数試行）"""
+    if not os.path.exists(path):
+        return True
+    
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            # 読み取り専用属性を解除
+            for root, dirs, files in os.walk(path):
+                for dir in dirs:
+                    os.chmod(os.path.join(root, dir), stat.S_IWUSR)
+                for file in files:
+                    filepath = os.path.join(root, file)
+                    os.chmod(filepath, stat.S_IWUSR)
+            
+            # 削除試行
+            shutil.rmtree(path, onerror=force_remove_readonly)
+            return True
+            
+        except PermissionError as e:
+            if attempt < max_attempts - 1:
+                print(f"  ⚠️ 削除試行 {attempt + 1}/{max_attempts} 失敗: {e}")
+                print(f"     再試行まで3秒待機...")
+                time.sleep(3)
+                
+                # ChromeDriverプロセスを強制終了
+                try:
+                    subprocess.run(['taskkill', '/F', '/IM', 'chromedriver.exe'], 
+                                 capture_output=True, text=True)
+                except:
+                    pass
+            else:
+                print(f"  ❌ ディレクトリ削除失敗: {path}")
+                return False
+        except Exception as e:
+            print(f"  ❌ 予期しないエラー: {e}")
+            return False
+    
+    return False
 
 def install_all_requirements():
     """必要なパッケージを完全インストール"""
@@ -40,23 +91,27 @@ def create_single_exe_spec():
     print("\n📝 単一EXE用specファイルを作成中...")
     
     spec_content = '''# -*- mode: python ; coding: utf-8 -*-
+import os
 
 block_cipher = None
+
+# データファイルのリスト（存在するものだけ）
+data_files = []
+for file in ['ui_manager.py', 'scraper_engine.py', 'chrome_driver_manager.py', 
+             'prefecture_mapper.py', 'gurunavi_label_based_extractor.py',
+             'gurunavi_multi_approach_extractor.py', 'phone_cleaner_simple.py']:
+    if os.path.exists(file):
+        data_files.append((file, '.'))
+
+# config.jsonがある場合のみ追加
+if os.path.exists('config.json'):
+    data_files.append(('config.json', '.'))
 
 a = Analysis(
     ['gurunavi_scraper_v3.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('ui_manager.py', '.'),
-        ('scraper_engine.py', '.'),
-        ('chrome_driver_manager.py', '.'),
-        ('prefecture_mapper.py', '.'),
-        ('gurunavi_label_based_extractor.py', '.'),
-        ('gurunavi_multi_approach_extractor.py', '.'),
-        ('phone_cleaner_simple.py', '.'),
-        ('config.json', '.') if os.path.exists('config.json') else None
-    ],
+    datas=data_files,
     hiddenimports=[
         'numpy',
         'numpy.core._multiarray_umath',
@@ -101,9 +156,6 @@ a = Analysis(
     noarchive=False,
 )
 
-# データファイルのNoneを除去
-a.datas = [x for x in a.datas if x is not None]
-
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
@@ -139,14 +191,24 @@ def clean_previous_builds():
     """以前のビルドを削除"""
     print("\n🧹 以前のビルドをクリーンアップ中...")
     
+    # ChromeDriverプロセスを事前に終了
+    try:
+        result = subprocess.run(['taskkill', '/F', '/IM', 'chromedriver.exe'], 
+                              capture_output=True, text=True)
+        if result.returncode == 0:
+            print("  ✓ ChromeDriverプロセスを終了しました")
+            time.sleep(2)  # プロセス終了を待つ
+    except:
+        pass
+    
     dirs_to_remove = ['build', 'dist', '__pycache__', 'Beyond_Gurunavi_Scraper']
     for dir_name in dirs_to_remove:
         if os.path.exists(dir_name):
-            try:
-                shutil.rmtree(dir_name)
+            print(f"  削除中: {dir_name}")
+            if safe_remove_directory(dir_name):
                 print(f"  ✓ {dir_name} を削除")
-            except:
-                print(f"  ⚠️ {dir_name} の削除失敗")
+            else:
+                print(f"  ⚠️ {dir_name} の削除に失敗しました（続行）")
 
 def build_single_exe():
     """単一EXEファイルをビルド"""
@@ -172,25 +234,45 @@ def build_single_exe():
         print(f"  ❌ ビルド失敗: {e}")
         return False
 
+def safe_copy_file(src, dst):
+    """ファイルを安全にコピー"""
+    try:
+        # 宛先が存在する場合、権限を変更してから削除
+        if os.path.exists(dst):
+            os.chmod(dst, stat.S_IWRITE)
+            os.remove(dst)
+        
+        shutil.copy2(src, dst)
+        return True
+    except Exception as e:
+        print(f"    ⚠️ ファイルコピーエラー: {src} → {dst}: {e}")
+        return False
+
 def create_organized_distribution():
     """整理された配布パッケージを作成"""
     print("\n📦 整理された配布フォルダを作成中...")
     
-    # メインフォルダ作成
+    # メインフォルダ作成（既存フォルダの安全な削除）
     main_folder = Path('Beyond_Gurunavi_Scraper')
     if main_folder.exists():
-        shutil.rmtree(main_folder)
+        print("  既存のフォルダを削除中...")
+        if not safe_remove_directory(main_folder):
+            # 削除できない場合は別名で作成
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            main_folder = Path(f'Beyond_Gurunavi_Scraper_{timestamp}')
+            print(f"  ⚠️ 別名で作成: {main_folder}")
+    
     main_folder.mkdir()
     
     # ==============================================
     # 1. メインアプリケーション（最上位に配置）
     # ==============================================
     
-    # EXEファイルを最上位にコピー（シンプルな名前で）
+    # EXEファイルを最上位にコピー
     exe_path = Path('dist') / 'Beyond_Gurunavi_Scraper.exe'
     if exe_path.exists():
-        shutil.copy2(exe_path, main_folder / 'Beyond_Gurunavi_Scraper.exe')
-        print(f"  ✓ メインアプリをコピー（{exe_path.stat().st_size / 1024 / 1024:.1f} MB）")
+        if safe_copy_file(exe_path, main_folder / 'Beyond_Gurunavi_Scraper.exe'):
+            print(f"  ✓ メインアプリをコピー（{exe_path.stat().st_size / 1024 / 1024:.1f} MB）")
     else:
         print("  ❌ EXEファイルが見つかりません")
         return None
@@ -222,12 +304,15 @@ def create_organized_distribution():
   }
 }"""
     
-    with open(system_folder / 'config.json', 'w', encoding='utf-8') as f:
-        f.write(config_content)
-    print("  ✓ config.json を_systemフォルダに作成")
-    
-    # config.jsonを最上位にもコピー（互換性のため）
-    shutil.copy2(system_folder / 'config.json', main_folder / 'config.json')
+    try:
+        with open(system_folder / 'config.json', 'w', encoding='utf-8') as f:
+            f.write(config_content)
+        print("  ✓ config.json を_systemフォルダに作成")
+        
+        # config.jsonを最上位にもコピー（互換性のため）
+        safe_copy_file(system_folder / 'config.json', main_folder / 'config.json')
+    except Exception as e:
+        print(f"  ⚠️ config.json作成エラー: {e}")
     
     # ChromeDriverをコピー（存在する場合）
     drivers_folder = system_folder / 'drivers'
@@ -235,13 +320,19 @@ def create_organized_distribution():
     
     chromedriver_path = Path('drivers') / 'chromedriver.exe'
     if chromedriver_path.exists():
-        shutil.copy2(chromedriver_path, drivers_folder / 'chromedriver.exe')
-        print("  ✓ 既存のChromeDriverをコピー")
+        if safe_copy_file(chromedriver_path, drivers_folder / 'chromedriver.exe'):
+            print("  ✓ 既存のChromeDriverをコピー")
     else:
         print("  ⚠️ ChromeDriverは初回起動時に自動ダウンロードされます")
     
     # driversフォルダを最上位にもコピー（互換性のため）
-    shutil.copytree(drivers_folder, main_folder / 'drivers', dirs_exist_ok=True)
+    try:
+        top_drivers = main_folder / 'drivers'
+        top_drivers.mkdir()
+        if (drivers_folder / 'chromedriver.exe').exists():
+            safe_copy_file(drivers_folder / 'chromedriver.exe', top_drivers / 'chromedriver.exe')
+    except Exception as e:
+        print(f"  ⚠️ driversフォルダ作成エラー: {e}")
     
     # ログフォルダ
     (system_folder / 'logs').mkdir()
@@ -268,25 +359,34 @@ def create_organized_distribution():
     tools_folder = main_folder / '_tools'
     tools_folder.mkdir()
     
-    # ログクリアツール（shift_jis対応）
+    # ログクリアツール
     log_clear = """@echo off
 echo ログファイルをクリアします...
-del /Q "..\_system\logs\*.log" 2>nul
-del /Q "..\logs\*.log" 2>nul
+del /Q "..\\_system\\logs\\*.log" 2>nul
+del /Q "..\\logs\\*.log" 2>nul
 echo.
 echo ログファイルをクリアしました
 echo.
 pause
 """
-    with open(tools_folder / 'ログクリア.bat', 'w', encoding='shift-jis') as f:
-        f.write(log_clear)
+    try:
+        with open(tools_folder / 'ログクリア.bat', 'w', encoding='shift-jis') as f:
+            f.write(log_clear)
+    except:
+        # shift-jisでエラーが出る場合はutf-8で試す
+        with open(tools_folder / 'ログクリア.bat', 'w', encoding='utf-8') as f:
+            f.write(log_clear)
     
     # 出力フォルダを開く
     open_output = """@echo off
-explorer "..\output"
+explorer "..\\output"
 """
-    with open(tools_folder / '出力フォルダを開く.bat', 'w', encoding='shift-jis') as f:
-        f.write(open_output)
+    try:
+        with open(tools_folder / '出力フォルダを開く.bat', 'w', encoding='shift-jis') as f:
+            f.write(open_output)
+    except:
+        with open(tools_folder / '出力フォルダを開く.bat', 'w', encoding='utf-8') as f:
+            f.write(open_output)
     
     print("  ✓ ユーティリティバッチファイルを作成")
     
@@ -338,7 +438,7 @@ Beyond_Gurunavi_Scraper/
 
 2. 検索条件を設定
    • 都道府県を選択
-   • 市区町村を選択（任意）
+   • エリアを選択（任意）
    • 取得件数を設定（1～5000件）
 
 3. データ取得開始
@@ -394,6 +494,23 @@ Excel形式（.xlsx）で以下の情報を保存：
 • 取得したデータは適切に管理してください
 
 
+【 トラブルシューティング 】
+────────────────────────────────────────────────────────
+エラーが発生した場合の対処法：
+
+1. 「アクセスが拒否されました」エラー
+   → アンチウイルスソフトを一時的に無効化
+   → 管理者権限で実行
+
+2. ChromeDriverエラー
+   → Google Chromeを最新版に更新
+   → PCを再起動してから実行
+
+3. 起動しない場合
+   → Windows Defenderの除外設定に追加
+   → .NET Framework 4.8以降をインストール
+
+
 【 サポート 】
 ────────────────────────────────────────────────────────
 問題が発生した場合：
@@ -415,20 +532,35 @@ def create_final_zip():
     """最終的なZIPファイルを作成"""
     print("\n🗜️ 配布用ZIPファイルを作成中...")
     
+    # フォルダ名を探す（タイムスタンプ付きの可能性も考慮）
+    folder_name = 'Beyond_Gurunavi_Scraper'
+    if not os.path.exists(folder_name):
+        # タイムスタンプ付きのフォルダを探す
+        folders = [f for f in os.listdir('.') if f.startswith('Beyond_Gurunavi_Scraper')]
+        if folders:
+            folder_name = folders[0]
+        else:
+            print("  ❌ 配布フォルダが見つかりません")
+            return None
+    
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     zip_name = f'Beyond_Gurunavi_Scraper_{timestamp}.zip'
     
-    with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk('Beyond_Gurunavi_Scraper'):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arc_name = os.path.relpath(file_path, '.')
-                zf.write(file_path, arc_name)
-    
-    size_mb = os.path.getsize(zip_name) / 1024 / 1024
-    print(f"  ✓ {zip_name} を作成（{size_mb:.1f} MB）")
-    
-    return zip_name
+    try:
+        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(folder_name):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arc_name = os.path.relpath(file_path, '.')
+                    zf.write(file_path, arc_name)
+        
+        size_mb = os.path.getsize(zip_name) / 1024 / 1024
+        print(f"  ✓ {zip_name} を作成（{size_mb:.1f} MB）")
+        
+        return zip_name
+    except Exception as e:
+        print(f"  ❌ ZIP作成エラー: {e}")
+        return None
 
 def print_folder_structure():
     """フォルダ構造を表示"""
@@ -493,12 +625,16 @@ def main():
         print("\n" + "=" * 60)
         print("✅ ビルド完了！")
         print("=" * 60)
-        print(f"\n📁 配布フォルダ: Beyond_Gurunavi_Scraper/")
-        print(f"📦 配布ZIP: {zip_file}")
+        
+        if dist_folder:
+            print(f"\n📁 配布フォルダ: {dist_folder}/")
+        if zip_file:
+            print(f"📦 配布ZIP: {zip_file}")
+        
         print("\n特徴:")
         print("  • EXEファイルが目立つように配置")
         print("  • システムファイルは_systemフォルダに整理")
-        print("  • ChromeDriver同梱済み")
+        print("  • ChromeDriver同梱済み（可能な場合）")
         print("  • わかりやすい説明書付き")
         
     except Exception as e:

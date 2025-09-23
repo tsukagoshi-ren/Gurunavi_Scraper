@@ -1,341 +1,386 @@
 """
-ChromeDriver管理クラス
-ChromeDriverのダウンロード、設定、初期化を管理
+ChromeDriver管理クラス（最適化版）
+長時間実行対応の最適化オプション付き
 """
 
 import os
-import subprocess
-import shutil
-import zipfile
+import time
 import logging
+import platform
+import subprocess
 from pathlib import Path
-import requests
-import json
 
 try:
     from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
-    from selenium.common.exceptions import WebDriverException
+    from selenium.webdriver.chrome.options import Options
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
 
+try:
+    from webdriver_manager.chrome import ChromeDriverManager as WDM
+    WDM_AVAILABLE = True
+except ImportError:
+    WDM_AVAILABLE = False
+
 class ChromeDriverManager:
-    """ChromeDriver管理クラス"""
+    """ChromeDriver管理クラス（最適化版）"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.app_dir = Path.cwd()
-        self.drivers_dir = self.app_dir / "drivers"
-        self.drivers_dir.mkdir(exist_ok=True)
-        self.chromedriver_path = self.drivers_dir / "chromedriver.exe"
+        self.driver_path = None
+        self.drivers = []  # 作成したドライバーのリスト
         
-        # Chrome for Testing API
-        self.cft_api_url = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
-        
-    def check_chrome_installed(self):
-        """Chrome インストール確認"""
-        chrome_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
-        ]
-        
-        for path in chrome_paths:
-            if os.path.exists(path):
-                self.logger.info(f"Chrome検出: {path}")
-                return True
-        
-        self.logger.error("Google Chromeがインストールされていません")
-        return False
+        if not SELENIUM_AVAILABLE:
+            self.logger.error("Seleniumがインストールされていません")
+            raise ImportError("selenium をインストールしてください: pip install selenium")
     
     def get_chrome_version(self):
-        """Chrome バージョン取得"""
-        try:
-            chrome_paths = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
-            ]
-            
-            for chrome_path in chrome_paths:
-                if os.path.exists(chrome_path):
-                    result = subprocess.run(
-                        [chrome_path, "--version"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0:
-                        version = result.stdout.strip().split()[-1]
-                        self.logger.info(f"Chromeバージョン: {version}")
-                        return version
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Chromeバージョン取得エラー: {e}")
-            return None
-    
-    def download_chromedriver(self, chrome_version=None):
-        """ChromeDriverダウンロード"""
-        try:
-            if not chrome_version:
-                chrome_version = self.get_chrome_version()
-                if not chrome_version:
-                    chrome_version = "131.0.6778.85"  # デフォルトバージョン
-            
-            self.logger.info(f"ChromeDriver取得開始: バージョン {chrome_version}")
-            
-            # Chrome for Testing APIから適切なバージョンを検索
-            response = requests.get(self.cft_api_url, timeout=10)
-            data = response.json()
-            
-            # メジャーバージョンで検索
-            major_version = chrome_version.split('.')[0]
-            matching_version = None
-            download_url = None
-            
-            for version_data in reversed(data['versions']):
-                if version_data['version'].startswith(major_version):
-                    if 'chromedriver' in version_data['downloads']:
-                        for platform_data in version_data['downloads']['chromedriver']:
-                            if platform_data['platform'] == 'win64':
-                                matching_version = version_data['version']
-                                download_url = platform_data['url']
-                                break
-                    if download_url:
-                        break
-            
-            if not download_url:
-                self.logger.error(f"ChromeDriverが見つかりません: {chrome_version}")
-                return False
-            
-            self.logger.info(f"ダウンロードURL: {download_url}")
-            
-            # ダウンロード
-            response = requests.get(download_url, timeout=60)
-            if response.status_code != 200:
-                self.logger.error(f"ダウンロード失敗: HTTP {response.status_code}")
-                return False
-            
-            # 一時ディレクトリに保存
-            temp_dir = self.drivers_dir / "temp"
-            temp_dir.mkdir(exist_ok=True)
-            zip_path = temp_dir / "chromedriver.zip"
-            
-            with open(zip_path, 'wb') as f:
-                f.write(response.content)
-            
-            # 解凍
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            
-            # chromedriver.exeを探す
-            for root, dirs, files in os.walk(temp_dir):
-                for file in files:
-                    if file == "chromedriver.exe":
-                        source = Path(root) / file
-                        shutil.copy2(source, self.chromedriver_path)
-                        self.logger.info(f"ChromeDriver配置完了: {self.chromedriver_path}")
-                        
-                        # クリーンアップ
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                        return True
-            
-            self.logger.error("chromedriver.exeが見つかりません")
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"ChromeDriverダウンロードエラー: {e}")
-            return False
-    
-    def verify_chromedriver(self):
-        """ChromeDriver動作確認"""
-        if not self.chromedriver_path.exists():
-            return False
+        """インストールされているChromeのバージョンを取得"""
+        system = platform.system()
         
         try:
-            result = subprocess.run(
-                [str(self.chromedriver_path), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                self.logger.info(f"ChromeDriver確認OK: {result.stdout.strip()}")
-                return True
-        except Exception as e:
-            self.logger.error(f"ChromeDriver確認エラー: {e}")
+            if system == "Windows":
+                # レジストリからバージョン取得
+                import winreg
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
+                    version, _ = winreg.QueryValueEx(key, "version")
+                    winreg.CloseKey(key)
+                    return version
+                except:
+                    # 別の場所を試す
+                    paths = [
+                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+                    ]
+                    for path in paths:
+                        if os.path.exists(path):
+                            result = subprocess.run([path, "--version"], capture_output=True, text=True)
+                            if result.returncode == 0:
+                                version = result.stdout.strip().split()[-1]
+                                return version
+            
+            elif system == "Darwin":  # macOS
+                result = subprocess.run(
+                    ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    version = result.stdout.strip().split()[-1]
+                    return version
+            
+            elif system == "Linux":
+                result = subprocess.run(["google-chrome", "--version"], capture_output=True, text=True)
+                if result.returncode == 0:
+                    version = result.stdout.strip().split()[-1]
+                    return version
         
-        return False
-    
-    def setup_chromedriver(self):
-        """ChromeDriver セットアップ"""
-        try:
-            # Chrome確認
-            if not self.check_chrome_installed():
-                raise Exception("Google Chromeがインストールされていません")
-            
-            # 既存のChromeDriver確認
-            if self.verify_chromedriver():
-                self.logger.info("既存のChromeDriverが利用可能")
-                return True
-            
-            # ChromeDriverダウンロード
-            self.logger.info("ChromeDriverをダウンロードします")
-            if self.download_chromedriver():
-                if self.verify_chromedriver():
-                    self.logger.info("ChromeDriverセットアップ完了")
-                    return True
-            
-            return False
-            
         except Exception as e:
-            self.logger.error(f"ChromeDriverセットアップエラー: {e}")
-            return False
+            self.logger.warning(f"Chromeバージョン取得エラー: {e}")
+        
+        return None
+    
+    def setup_driver_path(self):
+        """ChromeDriverのパスを設定"""
+        if self.driver_path and os.path.exists(self.driver_path):
+            return self.driver_path
+        
+        # webdriver-managerを使用
+        if WDM_AVAILABLE:
+            try:
+                # WDMで取得したパスを修正
+                installed_path = WDM().install()
+                
+                # THIRD_PARTY_NOTICESファイルが返された場合、実際のchromedriver.exeを探す
+                if 'THIRD_PARTY_NOTICES' in installed_path:
+                    # ディレクトリを取得
+                    driver_dir = os.path.dirname(installed_path)
+                    
+                    # chromedriver.exeを探す
+                    possible_names = ['chromedriver.exe', 'chromedriver']
+                    for name in possible_names:
+                        exe_path = os.path.join(driver_dir, name)
+                        if os.path.exists(exe_path):
+                            self.driver_path = exe_path
+                            self.logger.info(f"ChromeDriver検出（修正済み）: {self.driver_path}")
+                            return self.driver_path
+                    
+                    # サブディレクトリも確認
+                    for root, dirs, files in os.walk(driver_dir):
+                        for file in files:
+                            if file in possible_names:
+                                self.driver_path = os.path.join(root, file)
+                                self.logger.info(f"ChromeDriver検出（サブディレクトリ）: {self.driver_path}")
+                                return self.driver_path
+                else:
+                    # 正常なパスの場合
+                    self.driver_path = installed_path
+                    self.logger.info(f"ChromeDriver自動ダウンロード完了: {self.driver_path}")
+                    return self.driver_path
+                    
+            except Exception as e:
+                self.logger.error(f"ChromeDriver自動ダウンロード失敗: {e}")
+        
+        # 手動でパスを探す
+        possible_paths = self._get_possible_driver_paths()
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.driver_path = path
+                self.logger.info(f"ChromeDriver検出: {path}")
+                return path
+        
+        self.logger.error("ChromeDriverが見つかりません")
+        return None
+    
+    def _get_possible_driver_paths(self):
+        """ChromeDriverの可能なパスリストを取得"""
+        paths = []
+        
+        # カレントディレクトリ
+        paths.append(os.path.join(os.getcwd(), "chromedriver.exe"))
+        paths.append(os.path.join(os.getcwd(), "chromedriver"))
+        
+        # PATH環境変数
+        env_path = os.environ.get("PATH", "").split(os.pathsep)
+        for path in env_path:
+            paths.append(os.path.join(path, "chromedriver.exe"))
+            paths.append(os.path.join(path, "chromedriver"))
+        
+        # ユーザーディレクトリ
+        user_home = Path.home()
+        paths.append(user_home / "chromedriver.exe")
+        paths.append(user_home / "chromedriver")
+        
+        # webdriver-managerのデフォルトパス
+        wdm_paths = [
+            user_home / ".wdm" / "drivers" / "chromedriver" / "win64",
+            user_home / ".wdm" / "drivers" / "chromedriver" / "win32",
+            user_home / ".wdm" / "drivers" / "chromedriver",
+        ]
+        
+        for wdm_path in wdm_paths:
+            if wdm_path.exists():
+                # バージョンディレクトリを探す
+                for version_dir in wdm_path.iterdir():
+                    if version_dir.is_dir():
+                        # chromedriver.exeを探す
+                        for root, dirs, files in os.walk(version_dir):
+                            for file in files:
+                                if file == "chromedriver.exe" or file == "chromedriver":
+                                    paths.append(os.path.join(root, file))
+        
+        return paths
     
     def create_driver(self, headless=True, user_agent=None):
-        """WebDriver作成（安定性向上版）"""
-        if not SELENIUM_AVAILABLE:
-            raise Exception("Seleniumがインストールされていません")
+        """基本的なドライバー作成（後方互換性のため維持）"""
+        options = Options()
         
-        if not self.chromedriver_path.exists():
-            if not self.setup_chromedriver():
-                raise Exception("ChromeDriverのセットアップに失敗しました")
+        if headless:
+            options.add_argument("--headless")
         
+        if user_agent:
+            options.add_argument(f"user-agent={user_agent}")
+        
+        # 基本的な最適化オプション
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        
+        return self.create_driver_with_options(options)
+    
+    def create_driver_with_options(self, options):
+        """オプション指定でドライバー作成（最適化版）"""
         try:
-            chrome_options = Options()
+            driver_path = self.setup_driver_path()
+            if not driver_path:
+                raise Exception("ChromeDriverパスの設定に失敗しました")
             
-            # 安定性向上のためのオプション
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript-harmony-shipping")
-            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-            chrome_options.add_argument("--disable-renderer-backgrounding")
-            chrome_options.add_argument("--disable-features=TranslateUI")
-            chrome_options.add_argument("--disable-ipc-flooding-protection")
-            chrome_options.add_argument("--no-first-run")
-            chrome_options.add_argument("--no-default-browser-check")
-            chrome_options.add_argument("--disable-default-apps")
-            
-            # メモリ関連
-            chrome_options.add_argument("--memory-pressure-off")
-            chrome_options.add_argument("--max_old_space_size=4096")
-            
-            # タイムアウト関連
-            chrome_options.add_argument("--page-load-timeout=60000")
-            chrome_options.add_argument("--script-timeout=30000")
-            
-            # 自動化検出回避
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
-            
-            # JavaScript有効化（重要）
-            chrome_options.add_argument("--enable-javascript")
-            
-            # ヘッドレスモード
-            if headless:
-                chrome_options.add_argument("--headless=new")
-            
-            # ウィンドウサイズ
-            chrome_options.add_argument("--window-size=1920,1080")
-            
-            # User-Agent
-            if user_agent:
-                chrome_options.add_argument(f"--user-agent={user_agent}")
-            
-            # 詳細な設定
-            prefs = {
-                "profile.default_content_setting_values": {
-                    "images": 2,
-                    "plugins": 2,
-                    "popups": 2,
-                    "geolocation": 2,
-                    "notifications": 2,
-                    "media_stream": 2,
-                },
-                "profile.default_content_settings.popups": 0,
-                "profile.managed_default_content_settings.images": 2,
-                "profile.content_settings.exceptions.automatic_downloads.*.setting": 1
-            }
-            chrome_options.add_experimental_option("prefs", prefs)
-            
-            # サービス作成（ログ無効化とタイムアウト設定）
-            service = Service(
-                executable_path=str(self.chromedriver_path),
-                log_path='NUL',  # ログ出力無効化
-                service_args=['--verbose', '--whitelisted-ips=']
-            )
+            # サービス作成
+            service = Service(driver_path)
             
             # ドライバー作成
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver = webdriver.Chrome(service=service, options=options)
             
-            # タイムアウト設定（重要）
-            driver.implicitly_wait(20)
-            driver.set_page_load_timeout(60)
-            driver.set_script_timeout(30)
+            # 作成したドライバーをリストに追加
+            self.drivers.append(driver)
             
-            # 自動化検出回避のJavaScript実行
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            
-            self.logger.info("WebDriver作成成功")
+            self.logger.info("WebDriver作成成功（最適化版）")
             return driver
             
         except Exception as e:
             self.logger.error(f"WebDriver作成エラー: {e}")
             raise
     
+    def create_optimized_driver(self, headless=True, user_agent=None):
+        """長時間実行用の最適化ドライバー作成"""
+        options = Options()
+        
+        if headless:
+            options.add_argument("--headless")
+        
+        if user_agent:
+            options.add_argument(f"user-agent={user_agent}")
+        
+        # 最適化オプション（長時間実行対応）
+        optimization_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-features=VizDisplayCompositor",
+            "--memory-pressure-off",
+            "--enable-features=NetworkService,NetworkServiceInProcess",
+            "--enable-dns-over-https",
+            "--aggressive-cache-discard-threshold=100",
+            "--disk-cache-size=100",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=TranslateUI",
+            "--disable-ipc-flooding-protection",
+            "--disable-logging",
+            "--silent",
+            "--log-level=3"
+        ]
+        
+        for arg in optimization_args:
+            options.add_argument(arg)
+        
+        # 実験的オプション
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        # プリファレンス設定
+        prefs = {
+            "profile.default_content_setting_values": {
+                "notifications": 2,
+                "media_stream": 2,
+                "media_stream_mic": 2,
+                "media_stream_camera": 2,
+                "protocol_handlers": 2,
+                "ppapi_broker": 2,
+                "automatic_downloads": 2,
+                "midi_sysex": 2,
+                "push_messaging": 2,
+                "ssl_cert_decisions": 2,
+                "metro_switch_to_desktop": 2,
+                "protected_media_identifier": 2,
+                "app_banner": 2,
+                "site_engagement": 2,
+                "durable_storage": 2
+            },
+            "profile.managed_default_content_settings": {
+                "images": 1,  # 画像は表示（必要に応じて2に変更で無効化）
+                "plugins": 2,
+                "popups": 2,
+                "geolocation": 2,
+                "media_stream": 2,
+                "media_stream_mic": 2,
+                "media_stream_camera": 2
+            }
+        }
+        options.add_experimental_option("prefs", prefs)
+        
+        return self.create_driver_with_options(options)
+    
     def cleanup_driver(self, driver):
-        """WebDriverクリーンアップ（改善版）"""
-        if driver:
-            try:
-                # タブを閉じる
+        """ドライバーのクリーンアップ"""
+        try:
+            if driver:
+                # リストから削除
+                if driver in self.drivers:
+                    self.drivers.remove(driver)
+                
+                # タブを全て閉じる
                 try:
-                    driver.close()
+                    driver.execute_script("window.open('about:blank', '_self');")
+                    time.sleep(0.5)
                 except:
                     pass
                 
                 # ドライバーを終了
-                driver.quit()
-                
-                self.logger.info("WebDriverクリーンアップ完了")
-            except Exception as e:
-                self.logger.error(f"WebDriverクリーンアップエラー: {e}")
-                
-                # 強制終了を試行
                 try:
-                    import psutil
-                    for proc in psutil.process_iter(['pid', 'name']):
-                        if proc.info['name'] in ['chromedriver.exe', 'chrome.exe']:
-                            proc.kill()
+                    driver.quit()
                 except:
                     pass
+                
+                self.logger.info("WebDriverクリーンアップ完了")
+        except Exception as e:
+            self.logger.warning(f"クリーンアップエラー: {e}")
+    
+    def cleanup_all(self):
+        """全てのドライバーをクリーンアップ"""
+        for driver in self.drivers.copy():
+            self.cleanup_driver(driver)
+        self.drivers.clear()
     
     def fix_chromedriver(self):
-        """ChromeDriver修正（再ダウンロード）"""
+        """ChromeDriver修正処理"""
         try:
-            self.logger.info("ChromeDriver修正開始")
-            
-            # 既存のドライバー削除
-            if self.chromedriver_path.exists():
-                os.remove(self.chromedriver_path)
-                self.logger.info("既存のChromeDriver削除")
-            
-            # 再ダウンロード
-            if self.setup_chromedriver():
-                self.logger.info("ChromeDriver修正完了")
-                return True
-            else:
-                self.logger.error("ChromeDriver修正失敗")
-                return False
+            chrome_version = self.get_chrome_version()
+            if chrome_version:
+                self.logger.info(f"Chrome バージョン: {chrome_version}")
                 
-        except Exception as e:
-            self.logger.error(f"ChromeDriver修正エラー: {e}")
+                # webdriver-managerで最新版を取得
+                if WDM_AVAILABLE:
+                    try:
+                        self.driver_path = WDM().install()
+                        self.logger.info("ChromeDriver更新完了")
+                        
+                        # テスト起動
+                        test_driver = self.create_optimized_driver()
+                        test_driver.quit()
+                        
+                        self.logger.info("ChromeDriver修正成功")
+                        return True
+                    except Exception as e:
+                        self.logger.error(f"ChromeDriver修正失敗: {e}")
+            
             return False
+            
+        except Exception as e:
+            self.logger.error(f"修正処理エラー: {e}")
+            return False
+    
+    def get_driver_info(self):
+        """ドライバー情報を取得"""
+        info = {
+            "chrome_version": self.get_chrome_version(),
+            "driver_path": self.driver_path,
+            "active_drivers": len(self.drivers),
+            "selenium_version": None,
+            "webdriver_manager": WDM_AVAILABLE
+        }
+        
+        if SELENIUM_AVAILABLE:
+            try:
+                import selenium
+                info["selenium_version"] = selenium.__version__
+            except:
+                pass
+        
+        return info
+
+# 使用例
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    
+    manager = ChromeDriverManager()
+    
+    # ドライバー情報表示
+    info = manager.get_driver_info()
+    print("ChromeDriver情報:")
+    for key, value in info.items():
+        print(f"  {key}: {value}")
+    
+    # 最適化ドライバー作成テスト
+    try:
+        driver = manager.create_optimized_driver()
+        driver.get("https://www.google.com")
+        print(f"ページタイトル: {driver.title}")
+        manager.cleanup_driver(driver)
+        print("テスト完了")
+    except Exception as e:
+        print(f"テスト失敗: {e}")

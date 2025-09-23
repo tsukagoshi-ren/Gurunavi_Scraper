@@ -1,6 +1,6 @@
 """
 改善版：ぐるなび店舗データ抽出
-住所・営業時間・定休日の取得を改善
+ヘッダー部分からの電話番号取得対応
 """
 
 from selenium.webdriver.common.by import By
@@ -12,7 +12,7 @@ import time
 import logging
 
 class GurunaviMultiApproachExtractor:
-    """改善版ぐるなび店舗情報抽出クラス"""
+    """改善版ぐるなび店舗情報抽出クラス（ヘッダー対応）"""
     
     def __init__(self, driver, logger=None):
         self.driver = driver
@@ -43,11 +43,20 @@ class GurunaviMultiApproachExtractor:
             # ページが完全に読み込まれるのを待つ
             self._ensure_page_loaded()
             
-            # 店舗名を取得
-            detail['店舗名'] = self._extract_shop_name()
+            # 店舗名を取得（ヘッダー優先）
+            detail['店舗名'] = self._extract_shop_name_with_header()
             
-            # 電話番号を取得してクリーニング
-            raw_phone = self._extract_phone_number()
+            # 電話番号を取得してクリーニング（ヘッダー優先）
+            raw_phone = self._extract_phone_number_with_header()
+            
+            # 生データログ出力
+            if raw_phone and raw_phone != '-':
+                self.logger.info(f"=== 電話番号生データ（クリーニング前） ===")
+                self.logger.info(f"URL: {url}")
+                self.logger.info(f"生データ: '{raw_phone}'")
+                self.logger.info(f"文字数: {len(raw_phone)}")
+                self.logger.info("=" * 40)
+            
             detail['電話番号'] = self._clean_phone_number(raw_phone)
             
             self.logger.info(f"取得結果: {detail}")
@@ -56,7 +65,7 @@ class GurunaviMultiApproachExtractor:
         except Exception as e:
             self.logger.error(f"データ抽出エラー: {e}")
             return self._get_default_detail(url)
-            
+    
     def _ensure_page_loaded(self):
         """ページが完全に読み込まれることを確認"""
         try:
@@ -104,29 +113,46 @@ class GurunaviMultiApproachExtractor:
         except Exception as e:
             self.logger.debug(f"アコーディオン展開試行: {e}")
     
-    def _extract_shop_name(self):
-        """店舗名を取得（既存メソッドで成功しているので維持）"""
+    def _extract_shop_name_with_header(self):
+        """店舗名を取得（ヘッダー優先）"""
         try:
             # driver の存在確認
             if self.driver is None:
-                self.logger.error("Driver is None in _extract_shop_name")
+                self.logger.error("Driver is None in _extract_shop_name_with_header")
                 return '-'
-                
-            # JavaScriptで取得
-            js_script = """
+            
+            # 方法1: ヘッダーから取得（最優先）
+            js_script_header = """
+            // ヘッダーの店舗名を探す
+            const headerName = document.querySelector('#header-main-name a');
+            if (headerName) {
+                const name = headerName.innerText.trim();
+                console.log('ヘッダーから店舗名取得:', name);
+                return name;
+            }
+            
+            // h1タグから取得
             const h1 = document.querySelector('h1');
-            if (h1) return h1.innerText.trim();
+            if (h1) {
+                const name = h1.innerText.trim();
+                console.log('h1から店舗名取得:', name);
+                return name;
+            }
+            
             return null;
             """
-            name = self.driver.execute_script(js_script)
+            
+            name = self.driver.execute_script(js_script_header)
             if name and 'ぐるなび' not in name:
+                self.logger.info(f"店舗名取得成功（ヘッダー/h1）: {name}")
                 return name
             
-            # titleタグから取得
+            # 方法2: titleタグから取得
             title = self.driver.title
             if title:
                 name = title.split(' - ')[0].split('｜')[0].strip()
                 if name and name != 'ぐるなび':
+                    self.logger.info(f"店舗名取得成功（title）: {name}")
                     return name
             
         except Exception as e:
@@ -134,22 +160,59 @@ class GurunaviMultiApproachExtractor:
         
         return '-'
     
-    def _extract_phone_number(self):
-        """電話番号を取得（既存メソッドで成功しているので維持）"""
+    def _extract_phone_number_with_header(self):
+        """電話番号を取得（ヘッダー優先）"""
         try:
             # driver の存在確認
             if self.driver is None:
-                self.logger.error("Driver is None in _extract_phone_number")
+                self.logger.error("Driver is None in _extract_phone_number_with_header")
                 return '-'
-                
-            # JavaScriptで取得
+            
+            # JavaScriptで複数の方法で取得
             js_script = """
-            // 電話番号を探す複数の方法
+            // 方法1: ヘッダーの電話番号を最優先で探す
+            const headerPhone = document.querySelector('#header-main-phone .number');
+            if (headerPhone) {
+                const phone = headerPhone.innerText.trim();
+                console.log('ヘッダーから電話番号取得:', phone);
+                return {
+                    source: 'header',
+                    phone: phone,
+                    raw: headerPhone.innerText
+                };
+            }
+            
+            // 方法2: header-main-phone-info から探す
+            const headerPhoneInfo = document.querySelector('#header-main-phone-info .number');
+            if (headerPhoneInfo) {
+                const phone = headerPhoneInfo.innerText.trim();
+                console.log('ヘッダー情報から電話番号取得:', phone);
+                return {
+                    source: 'header-info',
+                    phone: phone,
+                    raw: headerPhoneInfo.innerText
+                };
+            }
+            
+            // 方法3: アコーディオンコンテンツから探す（青い文字）
+            const bluePhones = document.querySelectorAll('.commonAccordion_content_item_desc.-blue, p.-blue');
+            for (let elem of bluePhones) {
+                const text = elem.innerText.trim();
+                if (text && text.match(/\\d{2,4}[-\\s]?\\d{2,4}[-\\s]?\\d{3,4}/)) {
+                    console.log('青い文字から電話番号取得:', text);
+                    return {
+                        source: 'blue-text',
+                        phone: text,
+                        raw: elem.innerText
+                    };
+                }
+            }
+            
+            // 方法4: 一般的な電話番号要素から探す
             const patterns = [
-                '.commonAccordion_content_item_desc.-blue',
-                'p.-blue',
                 '[class*="phone"]',
-                '[class*="tel"]'
+                '[class*="tel"]',
+                '.number'
             ];
             
             for (let pattern of patterns) {
@@ -157,12 +220,17 @@ class GurunaviMultiApproachExtractor:
                 for (let elem of elems) {
                     const text = elem.innerText.trim();
                     if (text && text.match(/\\d{2,4}[-\\s]?\\d{2,4}[-\\s]?\\d{3,4}/)) {
-                        return text;
+                        console.log('パターンマッチから電話番号取得:', text, 'セレクタ:', pattern);
+                        return {
+                            source: pattern,
+                            phone: text,
+                            raw: elem.innerText
+                        };
                     }
                 }
             }
             
-            // ラベルベースで探す
+            // 方法5: ラベルベースで探す（最終手段）
             const items = document.querySelectorAll('.commonAccordion_content_item');
             for (let item of items) {
                 const title = item.querySelector('.commonAccordion_content_item_title');
@@ -170,7 +238,15 @@ class GurunaviMultiApproachExtractor:
                     const desc = item.querySelector('.commonAccordion_content_item_desc');
                     if (desc) {
                         const phoneElem = desc.querySelector('.-blue') || desc.querySelector('p');
-                        if (phoneElem) return phoneElem.innerText.trim();
+                        if (phoneElem) {
+                            const phone = phoneElem.innerText.trim();
+                            console.log('ラベルベースから電話番号取得:', phone);
+                            return {
+                                source: 'label-based',
+                                phone: phone,
+                                raw: phoneElem.innerText
+                            };
+                        }
                     }
                 }
             }
@@ -178,14 +254,71 @@ class GurunaviMultiApproachExtractor:
             return null;
             """
             
-            phone = self.driver.execute_script(js_script)
-            if phone and self._is_valid_phone_number(phone):
-                return phone
+            result = self.driver.execute_script(js_script)
+            
+            if result:
+                phone = result.get('phone', '')
+                source = result.get('source', 'unknown')
+                raw = result.get('raw', phone)
+                
+                self.logger.info(f"電話番号取得成功 - ソース: {source}")
+                self.logger.debug(f"生データ: '{raw}'")
+                
+                if phone and self._is_valid_phone_number(phone):
+                    return phone
+                elif raw:
+                    # 生データから電話番号部分を抽出
+                    extracted = self._extract_phone_from_raw(raw)
+                    if extracted:
+                        return extracted
+            
+            # Seleniumによるフォールバック
+            self.logger.debug("JavaScriptで取得失敗、Seleniumで再試行")
+            
+            # ヘッダーから直接取得を試みる
+            try:
+                header_phone = self.driver.find_element(By.CSS_SELECTOR, "#header-main-phone .number")
+                if header_phone:
+                    phone_text = header_phone.text.strip()
+                    self.logger.info(f"Seleniumでヘッダーから電話番号取得: {phone_text}")
+                    return phone_text
+            except NoSuchElementException:
+                pass
+            
+            # その他の要素から取得
+            try:
+                phone_elem = self.driver.find_element(By.CSS_SELECTOR, "p.-blue, .number")
+                if phone_elem:
+                    return phone_elem.text.strip()
+            except NoSuchElementException:
+                pass
             
         except Exception as e:
             self.logger.warning(f"電話番号抽出エラー: {e}")
         
         return '-'
+    
+    def _extract_phone_from_raw(self, raw_text):
+        """生テキストから電話番号部分を抽出"""
+        if not raw_text:
+            return None
+        
+        # 電話番号パターン
+        patterns = [
+            r'(0\d{1,4}-\d{1,4}-\d{3,4})',
+            r'(0\d{9,10})',
+            r'(050-\d{4}-\d{4})',
+            r'(0120-\d{3}-\d{3})',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, raw_text)
+            if match:
+                phone = match.group(1)
+                self.logger.debug(f"生データから電話番号抽出: '{raw_text}' → '{phone}'")
+                return phone
+        
+        return None
     
     def _is_valid_phone_number(self, phone_str):
         """電話番号の妥当性チェック（追加メソッド）"""
@@ -198,220 +331,6 @@ class GurunaviMultiApproachExtractor:
         # 10-11桁の数字があるかチェック
         digits_only = cleaned.replace('-', '')
         return 10 <= len(digits_only) <= 11
-    
-    def _extract_address_improved(self):
-        """住所を改善された方法で取得"""
-        try:
-            # driver の存在確認
-            if self.driver is None:
-                return '-'
-                
-            # 方法1: JavaScriptで詳細に取得
-            js_script = """
-            // 住所ラベルを含む要素を探す
-            const items = document.querySelectorAll('.commonAccordion_content_item');
-            
-            for (let item of items) {
-                const title = item.querySelector('.commonAccordion_content_item_title');
-                if (title && title.innerText.includes('住所')) {
-                    const descContainer = item.querySelector('.commonAccordion_content_item_desc');
-                    if (descContainer) {
-                        // 住所のテキストを含むp要素を探す（最初のp要素）
-                        const paragraphs = descContainer.querySelectorAll('p');
-                        for (let p of paragraphs) {
-                            const text = p.innerText.trim();
-                            // 電話番号パターンを含まない、かつ「地図」を含まないテキスト
-                            if (text && 
-                                !text.match(/\\d{2,4}[-\\s]?\\d{2,4}[-\\s]?\\d{3,4}/) &&
-                                !text.includes('地図')) {
-                                
-                                // 郵便番号を除去
-                                let address = text.replace(/〒\\d{3}-\\d{4}\\s*/, '');
-                                // 都道府県名が含まれているか確認
-                                const prefectures = ['北海道', '青森県', '岩手県', '宮城県', '秋田県',
-                                    '山形県', '福島県', '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県',
-                                    '東京都', '神奈川県', '新潟県', '富山県', '石川県', '福井県', '山梨県',
-                                    '長野県', '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府',
-                                    '大阪府', '兵庫県', '奈良県', '和歌山県', '鳥取県', '島根県', '岡山県',
-                                    '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県',
-                                    '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'];
-                                
-                                const hasPrefecture = prefectures.some(pref => address.includes(pref));
-                                if (hasPrefecture || address.includes('区') || address.includes('市')) {
-                                    return address;
-                                }
-                            }
-                        }
-                        
-                        // 上記で見つからない場合、descContainer全体のテキストから抽出
-                        const fullText = descContainer.innerText;
-                        const lines = fullText.split('\\n');
-                        for (let line of lines) {
-                            const cleaned = line.trim();
-                            if (cleaned && 
-                                !cleaned.match(/\\d{2,4}[-\\s]?\\d{2,4}[-\\s]?\\d{3,4}/) &&
-                                !cleaned.includes('地図') &&
-                                cleaned.length > 5) {
-                                
-                                let address = cleaned.replace(/〒\\d{3}-\\d{4}\\s*/, '');
-                                if (address) return address;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            return null;
-            """
-            
-            address = self.driver.execute_script(js_script)
-            if address:
-                self.logger.info(f"住所取得成功: {address}")
-                return address
-            
-            # 方法2: 直接要素を探索
-            elements = self.driver.find_elements(By.CLASS_NAME, "commonAccordion_content_item")
-            for elem in elements:
-                try:
-                    title = elem.find_element(By.CLASS_NAME, "commonAccordion_content_item_title")
-                    if "住所" in title.text:
-                        desc = elem.find_element(By.CLASS_NAME, "commonAccordion_content_item_desc")
-                        
-                        # p要素を個別にチェック
-                        p_elements = desc.find_elements(By.TAG_NAME, "p")
-                        for p in p_elements:
-                            text = p.text.strip()
-                            # 電話番号でない、地図リンクでない
-                            if (text and 
-                                not re.search(r'\d{2,4}[-\s]?\d{2,4}[-\s]?\d{3,4}', text) and
-                                '地図' not in text):
-                                
-                                # 郵便番号を除去
-                                address = re.sub(r'〒\d{3}-\d{4}\s*', '', text).strip()
-                                if address:
-                                    self.logger.info(f"住所取得成功（要素探索）: {address}")
-                                    return address
-                except:
-                    continue
-            
-        except Exception as e:
-            self.logger.warning(f"住所抽出エラー: {e}")
-        
-        return '-'
-    
-    def _extract_business_hours_improved(self):
-        """営業時間を改善された方法で取得"""
-        try:
-            # driver の存在確認
-            if self.driver is None:
-                return '-'
-                
-            # JavaScriptで取得
-            js_script = """
-            const items = document.querySelectorAll('.commonAccordion_content_item');
-            
-            for (let item of items) {
-                const title = item.querySelector('.commonAccordion_content_item_title');
-                if (title && title.innerText.includes('営業時間')) {
-                    const desc = item.querySelector('.commonAccordion_content_item_desc');
-                    if (desc) {
-                        // 全てのテキストを取得して整形
-                        let hours = desc.innerText.trim();
-                        // 改行を半角スペースに置換
-                        hours = hours.replace(/\\n+/g, ' ');
-                        // 連続するスペースを1つに
-                        hours = hours.replace(/\\s+/g, ' ');
-                        return hours;
-                    }
-                }
-            }
-            
-            return null;
-            """
-            
-            hours = self.driver.execute_script(js_script)
-            if hours:
-                self.logger.info(f"営業時間取得成功: {hours}")
-                return hours
-            
-            # 方法2: 要素を直接探索
-            elements = self.driver.find_elements(By.CLASS_NAME, "commonAccordion_content_item")
-            for elem in elements:
-                try:
-                    title = elem.find_element(By.CLASS_NAME, "commonAccordion_content_item_title")
-                    if "営業時間" in title.text:
-                        desc = elem.find_element(By.CLASS_NAME, "commonAccordion_content_item_desc")
-                        text = desc.text.strip()
-                        if text:
-                            # 整形
-                            text = text.replace('\n', ' ')
-                            text = re.sub(r'\s+', ' ', text)
-                            self.logger.info(f"営業時間取得成功（要素探索）: {text}")
-                            return text
-                except:
-                    continue
-            
-        except Exception as e:
-            self.logger.warning(f"営業時間抽出エラー: {e}")
-        
-        return '-'
-    
-    def _extract_holiday_improved(self):
-        """定休日を改善された方法で取得"""
-        try:
-            # driver の存在確認
-            if self.driver is None:
-                return '-'
-                
-            # JavaScriptで取得
-            js_script = """
-            const items = document.querySelectorAll('.commonAccordion_content_item');
-            
-            for (let item of items) {
-                const title = item.querySelector('.commonAccordion_content_item_title');
-                if (title && title.innerText.includes('定休日')) {
-                    const desc = item.querySelector('.commonAccordion_content_item_desc');
-                    if (desc) {
-                        // 全てのテキストを取得
-                        let holiday = desc.innerText.trim();
-                        // 改行を読点に置換
-                        holiday = holiday.replace(/\\n+/g, '、');
-                        // 連続する読点を1つに
-                        holiday = holiday.replace(/[、，,]+/g, '、');
-                        return holiday;
-                    }
-                }
-            }
-            
-            return null;
-            """
-            
-            holiday = self.driver.execute_script(js_script)
-            if holiday:
-                self.logger.info(f"定休日取得成功: {holiday}")
-                return holiday
-            
-            # 方法2: 要素を直接探索
-            elements = self.driver.find_elements(By.CLASS_NAME, "commonAccordion_content_item")
-            for elem in elements:
-                try:
-                    title = elem.find_element(By.CLASS_NAME, "commonAccordion_content_item_title")
-                    if "定休日" in title.text:
-                        desc = elem.find_element(By.CLASS_NAME, "commonAccordion_content_item_desc")
-                        text = desc.text.strip()
-                        if text:
-                            # 整形
-                            text = text.replace('\n', '、')
-                            text = re.sub(r'[、，,]+', '、', text)
-                            self.logger.info(f"定休日取得成功（要素探索）: {text}")
-                            return text
-                except:
-                    continue
-            
-        except Exception as e:
-            self.logger.warning(f"定休日抽出エラー: {e}")
-        
-        return '-'
     
     def _clean_phone_number(self, raw_text):
         """電話番号クリーニング処理"""
@@ -447,7 +366,11 @@ class GurunaviMultiApproachExtractor:
                     if 10 <= len(digits_only) <= 11:
                         return phone
             
-            return first_line
+            # 電話番号として妥当な場合はそのまま返す
+            if self._is_valid_phone_number(first_line):
+                return first_line
+            
+            return raw_text
             
         except Exception as e:
             self.logger.warning(f"電話番号クリーニングエラー: {e}")
@@ -468,14 +391,15 @@ class GurunaviMultiApproachExtractor:
             '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
-# scraper_engine.pyへの統合例
+
+# scraper_engine.pyの該当メソッドを置き換える例
 def integrate_improved_extractor(self):
     """
     scraper_engine.pyのImprovedScraperEngineクラスに統合
     """
     
     def _extract_gurunavi_store_data(self, url):
-        """ぐるなび店舗データ抽出（改善版）"""
+        """ぐるなび店舗データ抽出（ヘッダー対応版）"""
         try:
             # 改善版抽出器を使用
             extractor = GurunaviMultiApproachExtractor(self.driver, self.logger)
