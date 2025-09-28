@@ -1,6 +1,6 @@
 """
-住所取得対応版：ぐるなび店舗データ抽出
-URL、店舗名、電話番号、住所の4項目を取得
+住所・郵便番号取得対応版：ぐるなび店舗データ抽出
+URL、店舗名、電話番号、郵便番号、住所、取得日時の6項目を取得
 """
 
 from selenium.webdriver.common.by import By
@@ -12,7 +12,7 @@ import time
 import logging
 
 class GurunaviAddressExtractor:
-    """住所対応版ぐるなび店舗情報抽出クラス"""
+    """住所・郵便番号対応版ぐるなび店舗情報抽出クラス"""
     
     def __init__(self, driver, logger=None):
         self.driver = driver
@@ -22,7 +22,7 @@ class GurunaviAddressExtractor:
         self.wait = WebDriverWait(driver, 15)
     
     def extract_store_data_with_address(self, url):
-        """店舗データを抽出（住所含む5項目）"""
+        """店舗データを抽出（郵便番号含む6項目）"""
         try:
             from datetime import datetime
             
@@ -30,11 +30,12 @@ class GurunaviAddressExtractor:
                 self.logger.error("Driver is None in extract_store_data_with_address")
                 return self._get_default_detail(url)
             
-            # 基本情報の初期化（5項目）
+            # 基本情報の初期化（6項目）
             detail = {
                 'URL': url,
                 '店舗名': '-',
                 '電話番号': '-',
+                '郵便番号': '-',
                 '住所': '-',
                 '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
@@ -49,8 +50,10 @@ class GurunaviAddressExtractor:
             raw_phone = self._extract_phone_number()
             detail['電話番号'] = self._clean_phone_number(raw_phone)
             
-            # 住所を取得
-            detail['住所'] = self._extract_address()
+            # 郵便番号と住所を取得
+            postal_and_address = self._extract_postal_and_address()
+            detail['郵便番号'] = postal_and_address['postal_code']
+            detail['住所'] = postal_and_address['address']
             
             self.logger.info(f"取得結果: {detail}")
             return detail
@@ -165,11 +168,11 @@ class GurunaviAddressExtractor:
         
         return '-'
     
-    def _extract_address(self):
-        """住所を取得（複数の方法で試行）"""
+    def _extract_postal_and_address(self):
+        """郵便番号と住所を取得（分離版）"""
         try:
             if self.driver is None:
-                return '-'
+                return {'postal_code': '-', 'address': '-'}
             
             # 方法1: JavaScriptで直接取得（最も確実）
             js_script = """
@@ -179,29 +182,24 @@ class GurunaviAddressExtractor:
                 if (th.innerText.includes('住所')) {
                     const td = th.nextElementSibling;
                     if (td) {
-                        // regionとlocalityを結合
-                        const region = td.querySelector('.region');
-                        const locality = td.querySelector('.locality');
-                        if (region) {
-                            let address = region.innerText.trim();
-                            if (locality) {
-                                address += ' ' + locality.innerText.trim();
-                            }
-                            return address;
+                        // 全テキストを取得
+                        let fullText = td.innerText.trim();
+                        
+                        // 郵便番号を抽出
+                        let postalCode = '';
+                        const postalMatch = fullText.match(/〒(\\d{3}-\\d{4})/);
+                        if (postalMatch) {
+                            postalCode = postalMatch[1];
                         }
-                        // adrクラスから取得
-                        const adr = td.querySelector('.adr');
-                        if (adr) {
-                            let address = adr.innerText.trim();
-                            // 郵便番号を除去
-                            address = address.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
-                            return address.trim();
-                        }
-                        // tdの全テキストから取得
-                        let text = td.innerText.trim();
-                        text = text.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
-                        text = text.split('\\n')[0].trim(); // 最初の行のみ
-                        if (text) return text;
+                        
+                        // 住所テキストを抽出（郵便番号を除去）
+                        let address = fullText.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
+                        address = address.split('\\n')[0].trim(); // 最初の行のみ
+                        
+                        return {
+                            postal_code: postalCode,
+                            address: address
+                        };
                     }
                 }
             }
@@ -213,13 +211,25 @@ class GurunaviAddressExtractor:
                 if (title && title.innerText.includes('住所')) {
                     const desc = item.querySelector('.commonAccordion_content_item_desc');
                     if (desc) {
-                        let address = desc.innerText.trim();
-                        // 郵便番号を除去
-                        address = address.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
+                        let fullText = desc.innerText.trim();
+                        
+                        // 郵便番号を抽出
+                        let postalCode = '';
+                        const postalMatch = fullText.match(/〒(\\d{3}-\\d{4})/);
+                        if (postalMatch) {
+                            postalCode = postalMatch[1];
+                        }
+                        
+                        // 住所テキストを抽出（郵便番号を除去）
+                        let address = fullText.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
                         // 「地図アプリで見る」などを除去
                         address = address.replace(/地図アプリで見る/g, '').trim();
                         address = address.split('\\n')[0].trim(); // 最初の行のみ
-                        return address;
+                        
+                        return {
+                            postal_code: postalCode,
+                            address: address
+                        };
                     }
                 }
             }
@@ -227,33 +237,50 @@ class GurunaviAddressExtractor:
             // 方法3: addressクラスから直接取得
             const addressElems = document.querySelectorAll('.address, .adr, [class*="address"]');
             for (let elem of addressElems) {
-                let text = elem.innerText.trim();
-                if (text && !text.includes('メール') && !text.includes('URL')) {
-                    text = text.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
-                    text = text.split('\\n')[0].trim();
-                    if (text.length > 5) return text; // 短すぎる文字列を除外
+                let fullText = elem.innerText.trim();
+                if (fullText && !fullText.includes('メール') && !fullText.includes('URL')) {
+                    // 郵便番号を抽出
+                    let postalCode = '';
+                    const postalMatch = fullText.match(/〒(\\d{3}-\\d{4})/);
+                    if (postalMatch) {
+                        postalCode = postalMatch[1];
+                    }
+                    
+                    // 住所テキストを抽出
+                    let address = fullText.replace(/〒\\d{3}-\\d{4}\\s*/g, '');
+                    address = address.split('\\n')[0].trim();
+                    
+                    if (address.length > 5) { // 短すぎる文字列を除外
+                        return {
+                            postal_code: postalCode,
+                            address: address
+                        };
+                    }
                 }
             }
             
             return null;
             """
             
-            address = self.driver.execute_script(js_script)
-            if address:
-                # 追加のクリーニング
-                address = self._clean_address(address)
+            result = self.driver.execute_script(js_script)
+            if result:
+                postal_code = result.get('postal_code', '') or '-'
+                address = self._clean_address(result.get('address', ''))
+                
+                self.logger.info(f"郵便番号取得: {postal_code}")
                 self.logger.info(f"住所取得成功: {address}")
-                return address
+                
+                return {'postal_code': postal_code, 'address': address}
             
             # 方法2: Seleniumでフォールバック取得
-            return self._extract_address_selenium_fallback()
+            return self._extract_postal_and_address_selenium_fallback()
             
         except Exception as e:
-            self.logger.warning(f"住所抽出エラー: {e}")
-            return '-'
+            self.logger.warning(f"郵便番号・住所抽出エラー: {e}")
+            return {'postal_code': '-', 'address': '-'}
     
-    def _extract_address_selenium_fallback(self):
-        """Seleniumを使った住所取得のフォールバック"""
+    def _extract_postal_and_address_selenium_fallback(self):
+        """Seleniumを使った郵便番号・住所取得のフォールバック"""
         try:
             # テーブル構造から探す
             th_elements = self.driver.find_elements(By.TAG_NAME, "th")
@@ -263,35 +290,19 @@ class GurunaviAddressExtractor:
                     parent_tr = th.find_element(By.XPATH, "..")
                     td = parent_tr.find_element(By.TAG_NAME, "td")
                     
-                    # regionクラスを優先的に取得
-                    try:
-                        region = td.find_element(By.CLASS_NAME, "region")
-                        address = region.text.strip()
-                        
-                        # localityクラスも取得
-                        try:
-                            locality = td.find_element(By.CLASS_NAME, "locality")
-                            if locality.text.strip():
-                                address += " " + locality.text.strip()
-                        except:
-                            pass
-                        
-                        if address:
-                            return self._clean_address(address)
-                    except:
-                        pass
+                    full_text = td.text.strip()
                     
-                    # adrクラスから取得
-                    try:
-                        adr = td.find_element(By.CLASS_NAME, "adr")
-                        if adr.text:
-                            return self._clean_address(adr.text)
-                    except:
-                        pass
+                    # 郵便番号を抽出
+                    postal_code = '-'
+                    postal_match = re.search(r'〒(\d{3}-\d{4})', full_text)
+                    if postal_match:
+                        postal_code = postal_match.group(1)
                     
-                    # td全体のテキストから取得
-                    if td.text:
-                        return self._clean_address(td.text)
+                    # 住所を抽出（郵便番号を除去）
+                    address = re.sub(r'〒\d{3}-\d{4}\s*', '', full_text)
+                    address = self._clean_address(address)
+                    
+                    return {'postal_code': postal_code, 'address': address}
             
             # commonAccordion構造から探す
             items = self.driver.find_elements(By.CSS_SELECTOR, ".commonAccordion_content_item")
@@ -300,24 +311,34 @@ class GurunaviAddressExtractor:
                     title_elem = item.find_element(By.CSS_SELECTOR, ".commonAccordion_content_item_title")
                     if "住所" in title_elem.text:
                         desc_elem = item.find_element(By.CSS_SELECTOR, ".commonAccordion_content_item_desc")
-                        if desc_elem.text:
-                            return self._clean_address(desc_elem.text)
+                        full_text = desc_elem.text.strip()
+                        
+                        # 郵便番号を抽出
+                        postal_code = '-'
+                        postal_match = re.search(r'〒(\d{3}-\d{4})', full_text)
+                        if postal_match:
+                            postal_code = postal_match.group(1)
+                        
+                        # 住所を抽出
+                        address = re.sub(r'〒\d{3}-\d{4}\s*', '', full_text)
+                        address = self._clean_address(address)
+                        
+                        return {'postal_code': postal_code, 'address': address}
                 except:
                     continue
             
         except Exception as e:
             self.logger.debug(f"Seleniumフォールバック失敗: {e}")
         
-        return '-'
+        return {'postal_code': '-', 'address': '-'}
     
     def _clean_address(self, raw_address):
-        """住所のクリーニング処理"""
+        """住所のクリーニング処理（郵便番号は既に除去済み前提）"""
         if not raw_address or raw_address == '-':
             return raw_address
         
         try:
-            # 郵便番号を除去
-            address = re.sub(r'〒\d{3}-\d{4}\s*', '', raw_address)
+            address = raw_address
             
             # 不要な文字列を除去
             remove_patterns = [
@@ -388,12 +409,13 @@ class GurunaviAddressExtractor:
             return raw_text
     
     def _get_default_detail(self, url):
-        """デフォルトの店舗データ（5項目）"""
+        """デフォルトの店舗データ（6項目）"""
         from datetime import datetime
         return {
             'URL': url,
             '店舗名': '取得失敗',
             '電話番号': '-',
+            '郵便番号': '-',
             '住所': '-',
             '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }

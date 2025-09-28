@@ -252,18 +252,17 @@ class GurunaviScraperApp:
             
             self.logger.info(f"店舗一覧取得完了: {len(store_list)}件")
             
-            # 店舗一覧のExcel保存は削除
-            # （以前はここでsave_store_listを呼び出していたが削除）
-            
             # URL取得のみオプション
             if search_params.get('url_only', False):
-                # URL取得のみの場合も4項目形式で保存
+                # URL取得のみの場合も6項目形式で保存
                 url_data = []
                 for store in store_list:
                     url_data.append({
                         'URL': store['url'],
                         '店舗名': store['name'],
                         '電話番号': '-',
+                        '郵便番号': '-',
+                        '住所': '-',
                         '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     })
                 

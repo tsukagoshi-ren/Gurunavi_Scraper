@@ -604,7 +604,7 @@ class ImprovedScraperEngine:
             return []
     
     def get_store_detail(self, url):
-        """店舗詳細取得（住所対応版）"""
+        """店舗詳細取得()"""
         try:
             if self.driver is None:
                 self.logger.error("Driver is None before creating extractor")
@@ -625,7 +625,7 @@ class ImprovedScraperEngine:
             
             self._wait_for_stepwise_content_load()
             
-            # 住所対応版extractorを使用
+            # GurunaviAddressExtractorを使用
             from gurunavi_address_extractor import GurunaviAddressExtractor
             extractor = GurunaviAddressExtractor(self.driver, self.logger)
             store_data = extractor.extract_store_data_with_address(url)
@@ -635,6 +635,12 @@ class ImprovedScraperEngine:
                 if store_data['電話番号'] == '-':
                     self.stats['phone_extraction_failures'] += 1
                     self.logger.warning(f"電話番号取得失敗 (累計: {self.stats['phone_extraction_failures']}件)")
+                
+                if store_data['郵便番号'] == '-':
+                    if 'postal_extraction_failures' not in self.stats:
+                        self.stats['postal_extraction_failures'] = 0
+                    self.stats['postal_extraction_failures'] += 1
+                    self.logger.warning(f"郵便番号取得失敗 (累計: {self.stats['postal_extraction_failures']}件)")
                 
                 if store_data['住所'] == '-':
                     self.stats['address_extraction_failures'] += 1
@@ -692,6 +698,7 @@ class ImprovedScraperEngine:
             'URL': url,
             '店舗名': '取得失敗',
             '電話番号': '-',
+            '郵便番号': '-',
             '住所': '-',
             '取得日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
@@ -721,6 +728,7 @@ class ImprovedScraperEngine:
             '成功店舗数': self.stats['successful_stores'],
             '失敗店舗数': self.stats['failed_stores'],
             '電話番号取得失敗': self.stats['phone_extraction_failures'],
+            '郵便番号取得失敗': self.stats.get('postal_extraction_failures', 0),
             '住所取得失敗': self.stats['address_extraction_failures'],
             'UA切り替え回数': self.stats['ua_switches'],
             'CAPTCHA遭遇回数': self.stats['captcha_encounters'],
@@ -821,18 +829,19 @@ class ImprovedScraperEngine:
             self.cleanup()
     
     def _initialize_excel_with_urls(self, store_list):
-        """ExcelファイルをURL一覧で初期化（住所対応版）"""
+        """ExcelファイルをURL一覧で初期化"""
         try:
             self.logger.info(f"ExcelファイルをURL一覧で初期化: {self.excel_file_path}")
             
-            # 住所カラムを追加
+            # 郵便番号カラムを追加
             data = []
             for store in store_list:
                 data.append({
                     'URL': store['url'],
                     '店舗名': '',
                     '電話番号': '',
-                    '住所': '',  # 追加
+                    '郵便番号': '',
+                    '住所': '',
                     '取得日時': ''
                 })
             
@@ -845,8 +854,9 @@ class ImprovedScraperEngine:
                 worksheet.column_dimensions['A'].width = 60  # URL
                 worksheet.column_dimensions['B'].width = 30  # 店舗名
                 worksheet.column_dimensions['C'].width = 15  # 電話番号
-                worksheet.column_dimensions['D'].width = 40  # 住所（新規追加）
-                worksheet.column_dimensions['E'].width = 20  # 取得日時
+                worksheet.column_dimensions['D'].width = 10  # 郵便番号
+                worksheet.column_dimensions['E'].width = 40  # 住所
+                worksheet.column_dimensions['F'].width = 20  # 取得日時
             
             self.logger.info(f"URL一覧で初期化完了: {len(store_list)}件")
             
@@ -854,7 +864,7 @@ class ImprovedScraperEngine:
             self.logger.error(f"Excel初期化エラー: {e}")
     
     def _update_excel_row(self, row_number, detail):
-        """Excelの特定行を更新（住所対応版）"""
+        """Excelの特定行を更新"""
         try:
             from openpyxl import load_workbook
             
@@ -863,11 +873,12 @@ class ImprovedScraperEngine:
             
             excel_row = row_number + 1
             
-            # データを更新（住所カラムを追加）
+            # データを更新（郵便番号カラムを追加）
             sheet.cell(row=excel_row, column=2, value=detail.get('店舗名', ''))      # B列: 店舗名
             sheet.cell(row=excel_row, column=3, value=detail.get('電話番号', ''))    # C列: 電話番号
-            sheet.cell(row=excel_row, column=4, value=detail.get('住所', ''))        # D列: 住所（新規）
-            sheet.cell(row=excel_row, column=5, value=detail.get('取得日時', ''))    # E列: 取得日時
+            sheet.cell(row=excel_row, column=4, value=detail.get('郵便番号', ''))    # D列: 郵便番号
+            sheet.cell(row=excel_row, column=5, value=detail.get('住所', ''))        # E列: 住所
+            sheet.cell(row=excel_row, column=6, value=detail.get('取得日時', ''))    # F列: 取得日時
             
             book.save(self.excel_file_path)
             book.close()
@@ -880,9 +891,10 @@ class ImprovedScraperEngine:
             self.logger.error(f"Excel行更新エラー (行{row_number}): {e}")
     
     def _save_stats_to_excel(self):
-        """処理統計を同じExcelの「処理統計」シートに保存"""
+        """処理統計を同じExcelの「処理統計」シートに保存（エラー修正版）"""
         try:
             from openpyxl import load_workbook
+            import pandas as pd
             
             stats = self.get_processing_stats()
             stats_data = []
@@ -892,26 +904,77 @@ class ImprovedScraperEngine:
             df_stats = pd.DataFrame(stats_data)
             
             if self.excel_file_path.exists():
-                book = load_workbook(self.excel_file_path)
-                
-                if '処理統計' in book.sheetnames:
-                    del book['処理統計']
-                
-                book.save(self.excel_file_path)
-                book.close()
-                
-                with pd.ExcelWriter(self.excel_file_path, engine='openpyxl', mode='a') as writer:
-                    df_stats.to_excel(writer, sheet_name='処理統計', index=False)
+                # 既存のExcelファイルを読み込み
+                try:
+                    # 新しい方法: ExcelFileを使って読み込み、新規作成
+                    with pd.ExcelFile(self.excel_file_path) as excel_file:
+                        # 既存のシートを読み込み
+                        sheets_dict = {}
+                        for sheet_name in excel_file.sheet_names:
+                            if sheet_name != '処理統計':  # 処理統計以外のシートを保持
+                                sheets_dict[sheet_name] = pd.read_excel(excel_file, sheet_name=sheet_name)
                     
-                    worksheet = writer.sheets['処理統計']
-                    worksheet.column_dimensions['A'].width = 25
-                    worksheet.column_dimensions['B'].width = 30
-            
-            self.logger.info("処理統計を保存しました")
+                    # 新しくファイルを作成（上書き）
+                    with pd.ExcelWriter(self.excel_file_path, engine='openpyxl') as writer:
+                        # 既存のシートを書き込み
+                        for sheet_name, df in sheets_dict.items():
+                            df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        
+                        # 処理統計シートを追加/更新
+                        df_stats.to_excel(writer, sheet_name='処理統計', index=False)
+                        
+                        # 処理統計シートの列幅調整
+                        worksheet = writer.sheets['処理統計']
+                        worksheet.column_dimensions['A'].width = 25
+                        worksheet.column_dimensions['B'].width = 30
+                    
+                    self.logger.info("処理統計を保存しました")
+                    
+                except Exception as e:
+                    # フォールバック: openpyxlで直接操作
+                    self.logger.debug(f"pandas方式失敗、openpyxl直接操作: {e}")
+                    
+                    book = load_workbook(self.excel_file_path)
+                    
+                    # 既存の処理統計シートを削除
+                    if '処理統計' in book.sheetnames:
+                        del book['処理統計']
+                    
+                    # 新しいシートを作成
+                    ws = book.create_sheet('処理統計')
+                    
+                    # ヘッダー追加
+                    ws.cell(row=1, column=1, value='項目')
+                    ws.cell(row=1, column=2, value='値')
+                    
+                    # データ追加
+                    for idx, (key, value) in enumerate(stats.items(), start=2):
+                        ws.cell(row=idx, column=1, value=key)
+                        ws.cell(row=idx, column=2, value=str(value))
+                    
+                    # 列幅設定
+                    ws.column_dimensions['A'].width = 25
+                    ws.column_dimensions['B'].width = 30
+                    
+                    # 保存
+                    book.save(self.excel_file_path)
+                    book.close()
+                    
+                    self.logger.info("処理統計を保存しました（openpyxl直接）")
             
         except Exception as e:
             self.logger.warning(f"処理統計保存エラー: {e}")
-    
+            
+            # エラー時は別ファイルに保存
+            try:
+                stats_path = self.excel_file_path.with_name(
+                    self.excel_file_path.stem + '_stats.csv'
+                )
+                df_stats.to_csv(stats_path, index=False, encoding='utf-8-sig')
+                self.logger.info(f"処理統計をCSVで保存: {stats_path}")
+            except:
+                pass
+                
     def _init_memory_monitoring(self):
         """メモリ監視の初期化"""
         try:
@@ -951,7 +1014,7 @@ class ImprovedScraperEngine:
             self.logger.debug(f"メモリチェックエラー: {e}")
     
     def save_results(self, results, save_path, filename):
-        """最終結果をExcelに保存（住所対応版）"""
+        """最終結果をExcelに保存（郵便番号対応・エラー修正版）"""
         try:
             save_dir = Path(save_path)
             save_dir.mkdir(parents=True, exist_ok=True)
@@ -961,47 +1024,97 @@ class ImprovedScraperEngine:
             
             full_path = save_dir / filename
             
-            if full_path.exists():
-                from openpyxl import load_workbook
-                book = load_workbook(full_path)
-                
-                with pd.ExcelWriter(full_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    writer.book = book
-                    
-                    df = pd.DataFrame(results)
-                    df.to_excel(writer, sheet_name='店舗詳細', index=False)
-                    
-                    if hasattr(self, 'get_processing_stats'):
-                        stats_df = pd.DataFrame([self.get_processing_stats()]).T
-                        stats_df.columns = ['値']
-                        stats_df.to_excel(writer, sheet_name='処理統計')
-                    
-                    for sheet_name in ['店舗詳細', '処理統計']:
-                        if sheet_name in writer.sheets:
-                            worksheet = writer.sheets[sheet_name]
-                            for column in worksheet.columns:
-                                max_length = 0
-                                column_letter = column[0].column_letter
-                                for cell in column:
-                                    try:
-                                        if len(str(cell.value)) > max_length:
-                                            max_length = len(str(cell.value))
-                                    except:
-                                        pass
-                                adjusted_width = min(max_length + 2, 50)
-                                worksheet.column_dimensions[column_letter].width = adjusted_width
-            else:
-                with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
-                    df = pd.DataFrame(results)
-                    df.to_excel(writer, sheet_name='店舗詳細', index=False)
-                    
-                    if hasattr(self, 'get_processing_stats'):
-                        stats_df = pd.DataFrame([self.get_processing_stats()]).T
-                        stats_df.columns = ['値']
-                        stats_df.to_excel(writer, sheet_name='処理統計')
+            # データフレーム作成
+            df_results = pd.DataFrame(results)
             
-            self.logger.info(f"最終結果保存: {full_path}")
+            # 処理統計データフレーム作成
+            stats_data = []
+            if hasattr(self, 'get_processing_stats'):
+                stats = self.get_processing_stats()
+                for key, value in stats.items():
+                    stats_data.append({'項目': key, '値': str(value)})
+            
+            df_stats = pd.DataFrame(stats_data) if stats_data else pd.DataFrame()
+            
+            # 新しいバージョンのpandas/openpyxl対応
+            try:
+                # 方法1: mode='a' を使わない新しい方法
+                with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
+                    # 店舗詳細シート
+                    df_results.to_excel(writer, sheet_name='店舗詳細', index=False)
+                    
+                    # 処理統計シート
+                    if not df_stats.empty:
+                        df_stats.to_excel(writer, sheet_name='処理統計', index=False)
+                    
+                    # 列幅調整
+                    for sheet_name in writer.sheets:
+                        worksheet = writer.sheets[sheet_name]
+                        for column in worksheet.columns:
+                            max_length = 0
+                            column_letter = column[0].column_letter
+                            
+                            for cell in column:
+                                try:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                                except:
+                                    pass
+                            
+                            # 列幅設定（シートごとに調整）
+                            if sheet_name == '店舗詳細':
+                                if column_letter == 'A':  # URL
+                                    adjusted_width = 60
+                                elif column_letter == 'B':  # 店舗名
+                                    adjusted_width = 30
+                                elif column_letter == 'C':  # 電話番号
+                                    adjusted_width = 15
+                                elif column_letter == 'D':  # 郵便番号
+                                    adjusted_width = 10
+                                elif column_letter == 'E':  # 住所
+                                    adjusted_width = 40
+                                elif column_letter == 'F':  # 取得日時
+                                    adjusted_width = 20
+                                else:
+                                    adjusted_width = min(max_length + 2, 50)
+                            else:
+                                adjusted_width = min(max_length + 2, 50)
+                            
+                            worksheet.column_dimensions[column_letter].width = adjusted_width
+            
+            except Exception as e1:
+                # 方法2: フォールバック - 基本的な保存のみ
+                self.logger.warning(f"詳細保存失敗、基本保存を試行: {e1}")
+                
+                try:
+                    # シンプルな保存
+                    with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
+                        df_results.to_excel(writer, sheet_name='店舗詳細', index=False)
+                        
+                        if not df_stats.empty:
+                            df_stats.to_excel(writer, sheet_name='処理統計', index=False)
+                    
+                    self.logger.info(f"基本保存成功: {full_path}")
+                    
+                except Exception as e2:
+                    # 方法3: 最終手段 - CSVとして保存
+                    self.logger.warning(f"Excel保存失敗、CSV保存を試行: {e2}")
+                    csv_path = full_path.with_suffix('.csv')
+                    df_results.to_csv(csv_path, index=False, encoding='utf-8-sig')
+                    self.logger.info(f"CSV保存成功: {csv_path}")
+                    raise Exception(f"Excel保存に失敗したため、CSVで保存しました: {csv_path}")
+            
+            self.logger.info(f"最終結果保存完了: {full_path}")
             
         except Exception as e:
             self.logger.error(f"結果保存エラー: {e}")
+            
+            # エラー時でも最低限のデータ保存を試みる
+            try:
+                emergency_path = save_dir / f"{filename}_emergency.csv"
+                pd.DataFrame(results).to_csv(emergency_path, index=False, encoding='utf-8-sig')
+                self.logger.info(f"緊急保存完了: {emergency_path}")
+            except:
+                pass
+            
             raise
